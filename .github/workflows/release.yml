@@ -14,7 +14,8 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends
              debhelper dh-python pybuild-plugin-pyproject python3-all python3-setuptools devscripts
       - run: dpkg-buildpackage -us -uc -b
-      - run: mkdir -p out && mv ../aquila-radio-astronomy_*.deb out/
+      - run: sh packaging/apt/virgo-deb.sh
+      - run: mkdir -p out && mv ../aquila-radio-astronomy_*.deb build/virgo/*.deb out/
       - uses: actions/upload-artifact@v4
         with: {name: deb, path: out/*.deb}
 
