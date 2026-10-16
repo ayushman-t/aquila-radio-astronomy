@@ -38,7 +38,9 @@ $pkg = "build\msix"
 Remove-Item -Recurse -Force $pkg -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force "$pkg\Assets" | Out-Null
 Copy-Item -Recurse dist\aquila-radio-astronomy "$pkg\aquila-radio-astronomy"
-(Get-Content packaging\windows\AppxManifest.xml) -replace "VERSION", $version | Set-Content "$pkg\AppxManifest.xml"
+# written as UTF-8 without a byte order mark: makeappx rejects anything else
+$manifest = (Get-Content -Raw packaging\windows\AppxManifest.xml) -replace "VERSION", $version
+[IO.File]::WriteAllText((Resolve-Path $pkg).Path + "\AppxManifest.xml", $manifest, (New-Object Text.UTF8Encoding $false))
 Copy-Item build\icons\aquila-150.png "$pkg\Assets\Square150x150Logo.png"
 Copy-Item build\icons\aquila-44.png  "$pkg\Assets\Square44x44Logo.png"
 Copy-Item build\icons\aquila-71.png  "$pkg\Assets\Square71x71Logo.png"
@@ -46,4 +48,5 @@ Copy-Item build\icons\aquila-50.png  "$pkg\Assets\StoreLogo.png"
 python -c "from PIL import Image; im=Image.open('build/icons/aquila-128.png').convert('RGBA'); w=Image.new('RGBA',(310,150),(0,0,0,0)); w.paste(im,(91,11)); w.save('build/msix/Assets/Wide310x150Logo.png')"
 $sdk = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\10.*\x64\makeappx.exe" | Sort-Object FullName | Select-Object -Last 1
 & $sdk.FullName pack /d $pkg /p "dist\aquila-radio-astronomy-$version.msix" /o
+if ($LASTEXITCODE -ne 0) { throw "makeappx failed" }
 Write-Host "built dist\aquila-radio-astronomy-$version-windows-x64.zip and dist\aquila-radio-astronomy-$version.msix"
