@@ -93,4 +93,4 @@ Packaging and the release process are in [docs/PACKAGING.md](docs/PACKAGING.md).
 
 ## Credits
 
-Hydrogen line plots are drawn by [virgo](https://github.com/0xCoto/VIRGO) (GPL-3). The sky map background is the ESO/S. Brunier Milky Way panorama (CC BY 4.0), reprojected to equatorial coordinates.
+Hydrogen line plots are drawn by [virgo](https://github.com/0xCoto/VIRGO) (GPL-3). The sky map background is the ESA Gaia EDR3 all-sky map (ESA/Gaia/DPAC, CC BY-SA 3.0 IGO), reprojected to equatorial coordinates.

@@ -2,15 +2,16 @@
 # MIT licence: free for anyone to use and modify.
 """Where the dish points on the sky. Pure numpy maths (no astropy): horizon to
 equatorial, equatorial to galactic, the galactic plane track. The background is
-the ESO/S. Brunier Milky Way panorama (CC BY 4.0), reprojected once from galactic
-to equatorial coordinates and shipped with the app, so nothing is downloaded."""
+the ESA Gaia EDR3 all-sky map (ESA/Gaia/DPAC, CC BY-SA 3.0 IGO), drawn from measured
+star positions, reprojected once from galactic to equatorial coordinates and shipped
+with the app, so nothing is downloaded."""
 import math
 import os
 
 import numpy as np
 
 BACKGROUND = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "sky.jpg")
-CREDIT = "Background: ESO/S. Brunier Milky Way panorama (CC BY 4.0)"
+CREDIT = "Background: ESA/Gaia/DPAC all-sky map (CC BY-SA 3.0 IGO)"
 
 RA_NGP, DEC_NGP, L_NCP = math.radians(192.85948), math.radians(27.12825), math.radians(122.93192)
 

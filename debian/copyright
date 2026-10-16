@@ -35,9 +35,10 @@ License: GPL-3
  version. On Debian systems the full text is in /usr/share/common-licenses/GPL-3.
 
 Files: aquila/assets/sky.jpg
-Copyright: ESO/S. Brunier
-Comment: The Milky Way panorama, https://www.eso.org/public/images/eso0932a/,
+Copyright: ESA/Gaia/DPAC
+Comment: Gaia EDR3 all-sky flux map (acknowledgement A. Moitinho),
+ https://sci.esa.int/web/gaia/-/the-colour-of-the-sky-from-gaia-s-early-data-release-3-equirectangular-projection
  reprojected from galactic to equatorial coordinates for the sky map.
-License: CC-BY-4.0
- Creative Commons Attribution 4.0 International,
- https://creativecommons.org/licenses/by/4.0/
+License: CC-BY-SA-3.0-IGO
+ Creative Commons Attribution-ShareAlike 3.0 IGO,
+ https://creativecommons.org/licenses/by-sa/3.0/igo/
