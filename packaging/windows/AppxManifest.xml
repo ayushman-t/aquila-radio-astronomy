@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- MSIX manifest for the Microsoft Store build. The build script fills in VERSION.
+<!-- MSIX manifest for the Microsoft Store build. The build script fills in @VERSION@.
      Identity values are the ones Partner Center assigned to the product
      (Store ID 9N79NN5HNZVS, https://apps.microsoft.com/detail/9N79NN5HNZVS). -->
 <Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
          xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
          xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities">
-  <Identity Name="AyushmanTripathi.AquilaRadioAstronomy" Publisher="CN=DA19902E-2617-46D1-8A00-DC9AAEDC482F" Version="VERSION.0" ProcessorArchitecture="x64"/>
+  <Identity Name="AyushmanTripathi.AquilaRadioAstronomy" Publisher="CN=DA19902E-2617-46D1-8A00-DC9AAEDC482F" Version="@VERSION@.0" ProcessorArchitecture="x64"/>
   <Properties>
     <DisplayName>Aquila Radio Astronomy</DisplayName>
     <PublisherDisplayName>Ayushman Tripathi</PublisherDisplayName>

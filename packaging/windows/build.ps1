@@ -39,7 +39,7 @@ Remove-Item -Recurse -Force $pkg -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force "$pkg\Assets" | Out-Null
 Copy-Item -Recurse dist\aquila-radio-astronomy "$pkg\aquila-radio-astronomy"
 # written as UTF-8 without a byte order mark: makeappx rejects anything else
-$manifest = (Get-Content -Raw packaging\windows\AppxManifest.xml) -replace "VERSION", $version
+$manifest = (Get-Content -Raw packaging\windows\AppxManifest.xml) -creplace "@VERSION@", $version
 [IO.File]::WriteAllText((Resolve-Path $pkg).Path + "\AppxManifest.xml", $manifest, (New-Object Text.UTF8Encoding $false))
 Copy-Item build\icons\aquila-150.png "$pkg\Assets\Square150x150Logo.png"
 Copy-Item build\icons\aquila-44.png  "$pkg\Assets\Square44x44Logo.png"
