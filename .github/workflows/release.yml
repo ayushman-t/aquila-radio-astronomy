@@ -86,7 +86,8 @@ jobs:
   release:
     needs: [deb, snap, windows, macos, linux-portable]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    # publish whatever built; one broken builder must not hold back the rest
+    if: always() && startsWith(github.ref, 'refs/tags/')
     permissions: {contents: write}
     steps:
       - uses: actions/download-artifact@v4
