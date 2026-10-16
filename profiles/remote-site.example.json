@@ -1,0 +1,19 @@
+{
+  "name": "remote-dish",
+  "sdr": "airspy",
+  "center_mhz": 1420.6,
+  "sample_rate": 3000000,
+  "dish": {"az": 0.0, "el": 90.0, "diameter_m": 2.4},
+  "site": {"lat": null, "lon": null, "alt": 0},
+  "state_dir": "/home/pi/hydrogen_obs/seti",
+  "advanced": {
+    "gain": {"lna": 14, "mixer": 10, "vga": 10},
+    "exclude_if_khz": [[1100, 1500]],
+    "comb_period_hz": [40000, 46000],
+    "require_ntp": true,
+    "api_bind": "127.0.0.1",
+    "api_port": 8090
+  },
+  "hline": {"day_file": true},
+  "save": {"csv": true, "plots": false, "spectra": false, "raw_iq": false}
+}

@@ -1,0 +1,20 @@
+#!/usr/bin/make -f
+export PYBUILD_NAME=aquila
+export PYBUILD_SYSTEM=pyproject
+
+%:
+	dh $@ --with python3 --buildsystem=pybuild
+
+override_dh_auto_install:
+	dh_auto_install
+	install -D -m 644 packaging/linux/aquila-radio-astronomy.desktop \
+	    debian/aquila-radio-astronomy/usr/share/applications/aquila-radio-astronomy.desktop
+	install -D -m 644 packaging/linux/in.radioastronomy.aquila.metainfo.xml \
+	    debian/aquila-radio-astronomy/usr/share/metainfo/in.radioastronomy.aquila.metainfo.xml
+	install -D -m 644 aquila/assets/icon-256.png \
+	    debian/aquila-radio-astronomy/usr/share/icons/hicolor/256x256/apps/aquila-radio-astronomy.png
+	install -D -m 644 aquila/assets/icon-512.png \
+	    debian/aquila-radio-astronomy/usr/share/icons/hicolor/512x512/apps/aquila-radio-astronomy.png
+
+override_dh_auto_test:
+	# the test suite needs the SDR tools and a display; it runs in CI, not at package build

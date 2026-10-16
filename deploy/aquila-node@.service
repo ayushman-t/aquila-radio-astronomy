@@ -1,0 +1,27 @@
+# Aquila Radio Astronomy node as a system service. Ayushman Tripathi, www.radioastronomy.in
+# Template unit: the instance name is the Linux user that owns the install.
+#   sudo cp deploy/aquila-node@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now aquila-node@pi
+# Expects the app installed in /home/<user>/aquila-venv (python3 -m venv ~/aquila-venv &&
+# ~/aquila-venv/bin/pip install .) and the config at /home/<user>/aquila-radio-astronomy/config.json.
+# The memory cap is the point: a leak kills only this service, never the box or SSH.
+[Unit]
+Description=Aquila Radio Astronomy node (%i)
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i
+ExecStart=/home/%i/aquila-venv/bin/python -m aquila.cli -c /home/%i/aquila-radio-astronomy/config.json run
+Restart=always
+RestartSec=30
+Nice=10
+MemoryMax=2G
+MemoryHigh=1500M
+TasksMax=64
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

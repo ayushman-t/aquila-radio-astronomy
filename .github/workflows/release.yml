@@ -1,0 +1,97 @@
+name: release
+# Tag a version (git tag v0.2.0 && git push --tags) and this builds every package and
+# attaches them to a GitHub release. Store uploads are separate, see docs/PACKAGING.md.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  deb:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends
+             debhelper dh-python pybuild-plugin-pyproject python3-all python3-setuptools devscripts
+      - run: dpkg-buildpackage -us -uc -b
+      - run: mkdir -p out && mv ../aquila-radio-astronomy_*.deb out/
+      - uses: actions/upload-artifact@v4
+        with: {name: deb, path: out/*.deb}
+
+  snap:
+    runs-on: ubuntu-24.04
+    env:
+      SNAP_CREDS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: snapcore/action-build@v1
+        id: build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snap
+          path: ${{ steps.build.outputs.snap }}
+      # publish to the Snap Store once SNAPCRAFT_STORE_CREDENTIALS is set (snapcraft export-login)
+      - if: env.SNAP_CREDS != ''
+        uses: snapcore/action-publish@v1
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        with:
+          snap: ${{ steps.build.outputs.snap }}
+          release: edge
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install ".[gui,hline]" pyinstaller pillow
+      - run: powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/*.zip
+            dist/*.msix
+
+  macos:
+    strategy:
+      matrix:
+        os: [macos-14, macos-13]       # arm64 and x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install ".[gui,hline]" pyinstaller pillow
+      - run: sh packaging/macos/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.os }}
+          path: dist/*.dmg
+
+  linux-portable:
+    runs-on: ubuntu-22.04              # old glibc so the tarball runs on older distros
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon0 libgl1
+      - run: pip install ".[gui,hline]" pyinstaller pillow
+      - run: python packaging/make_icons.py && pyinstaller --noconfirm --clean packaging/pyinstaller/aquila.spec
+      - run: cd dist && tar czf aquila-radio-astronomy-linux-x64.tar.gz aquila-radio-astronomy
+      - uses: actions/upload-artifact@v4
+        with: {name: linux-portable, path: dist/*.tar.gz}
+
+  release:
+    needs: [deb, snap, windows, macos, linux-portable]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions: {contents: write}
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {path: artifacts, merge-multiple: true}
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

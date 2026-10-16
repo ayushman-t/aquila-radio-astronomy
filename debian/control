@@ -1,0 +1,28 @@
+Source: aquila-radio-astronomy
+Section: science
+Priority: optional
+Maintainer: Ayushman Tripathi <ayushmantripathi7724@gmail.com>
+Build-Depends: debhelper-compat (= 13), dh-python, pybuild-plugin-pyproject,
+ python3-all, python3-setuptools
+Standards-Version: 4.6.2
+Homepage: https://www.radioastronomy.in/
+Rules-Requires-Root: no
+
+Package: aquila-radio-astronomy
+Architecture: all
+Depends: ${python3:Depends}, ${misc:Depends},
+ python3-pyside6.qtcore, python3-pyside6.qtgui, python3-pyside6.qtwidgets,
+ python3-pyqtgraph, python3-numpy, python3-scipy, python3-matplotlib,
+ python3-astropy, python3-astro-virgo, airspy, rtl-sdr, hackrf
+Suggests: hydrasdr-host-tools
+Description: Narrowband SETI survey and hydrogen line for small dishes and cheap SDRs
+ Point the dish, plug in the SDR, press Start. Aquila streams the receiver
+ through a fine FFT, searches every block for drifting narrowband signals and
+ keeps only the hits and small pictures. The same observation gives calibrated
+ hydrogen line plots. Raw samples never touch the disk, memory is fixed and
+ disk use is capped, so a node runs for months on a Raspberry Pi.
+ .
+ Works with Airspy, HydraSDR, RTL-SDR and HackRF. Several nodes can be watched
+ from one desktop over the network. One install brings the SDR tools and
+ the hydrogen line plotting (python3-astro-virgo, GPL-3, from the same
+ repository) with it.

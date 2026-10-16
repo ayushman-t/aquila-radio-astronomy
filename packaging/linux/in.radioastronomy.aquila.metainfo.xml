@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>in.radioastronomy.aquila</id>
+  <name>Aquila Radio Astronomy</name>
+  <summary>Narrowband SETI survey and hydrogen line for a small dish and a cheap SDR</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer_name>Ayushman Tripathi</developer_name>
+  <description>
+    <p>Point the dish, plug in the SDR, press Start. Aquila streams the receiver through a fine FFT, searches every block for drifting narrowband signals, and keeps only the hits and small pictures. The same observation gives calibrated hydrogen line plots. Raw samples never touch the disk, memory is fixed and disk use is capped, so a node can run for months on a Raspberry Pi.</p>
+    <p>Works with Airspy, HydraSDR, RTL-SDR and HackRF. Several nodes can be watched from one desktop over the network.</p>
+  </description>
+  <launchable type="desktop-id">aquila-radio-astronomy.desktop</launchable>
+  <url type="homepage">https://www.radioastronomy.in/</url>
+  <provides><binary>aquila-gui</binary></provides>
+  <content_rating type="oars-1.1"/>
+</component>

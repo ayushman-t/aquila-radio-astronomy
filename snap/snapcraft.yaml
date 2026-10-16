@@ -1,0 +1,56 @@
+name: aquila-radio-astronomy
+title: Aquila Radio Astronomy
+summary: Narrowband SETI survey and hydrogen line for a small dish and a cheap SDR
+description: |
+  Point the dish, plug in the SDR, press Start. Aquila streams the receiver
+  through a fine FFT, searches every block for drifting narrowband signals and
+  keeps only the hits and small pictures. The same observation gives calibrated
+  hydrogen line plots. Raw samples never touch the disk, memory is fixed and
+  disk use is capped, so a node runs for months on a Raspberry Pi.
+
+  Works with Airspy, HydraSDR, RTL-SDR and HackRF (the vendor tools are
+  included). Several nodes can be watched from one desktop over the network.
+  Connect the "raw-usb" interface once so the app can open the receiver:
+    sudo snap connect aquila-radio-astronomy:raw-usb
+website: https://www.radioastronomy.in/
+license: MIT
+adopt-info: aquila
+base: core24
+confinement: strict
+grade: stable
+platforms:
+  amd64:
+  arm64:
+
+apps:
+  aquila-radio-astronomy:
+    command: bin/aquila-gui
+    extensions: [gnome]
+    desktop: usr/share/applications/aquila-radio-astronomy.desktop
+    plugs: [home, network, network-bind, raw-usb, removable-media]
+    environment:
+      PYTHONPATH: $SNAP/lib/python3.12/site-packages
+  aquila:
+    command: bin/aquila
+    plugs: [home, network, network-bind, raw-usb, removable-media]
+    environment:
+      PYTHONPATH: $SNAP/lib/python3.12/site-packages
+
+parts:
+  aquila:
+    plugin: python
+    source: .
+    python-packages: [".[gui,hline]"]
+    build-packages: [python3-dev]
+    stage-packages: [airspy, rtl-sdr, hackrf, libusb-1.0-0, python3-venv]
+    override-pull: |
+      craftctl default
+      craftctl set version="$(python3 -c 'import re;print(re.search(r"__version__ = \"(.+?)\"", open("aquila/__init__.py").read()).group(1))')"
+    override-build: |
+      craftctl default
+      install -D -m 644 packaging/linux/aquila-radio-astronomy.desktop \
+        $CRAFT_PART_INSTALL/usr/share/applications/aquila-radio-astronomy.desktop
+      install -D -m 644 aquila/assets/icon-256.png \
+        $CRAFT_PART_INSTALL/usr/share/icons/hicolor/256x256/apps/aquila-radio-astronomy.png
+      sed -i 's|^Icon=.*|Icon=${SNAP}/usr/share/icons/hicolor/256x256/apps/aquila-radio-astronomy.png|' \
+        $CRAFT_PART_INSTALL/usr/share/applications/aquila-radio-astronomy.desktop
