@@ -7,6 +7,12 @@ export PYBUILD_SYSTEM=pyproject
 
 override_dh_auto_install:
 	dh_auto_install
+	# Virgo (astro-virgo, GPL-3) is not in Debian, so it rides inside this package
+	pip3 download --no-deps --no-binary :all: -d build/virgo astro-virgo==3.8.2
+	pip3 install --no-deps --no-build-isolation --break-system-packages \
+	    --target debian/aquila-radio-astronomy/usr/lib/python3/dist-packages \
+	    build/virgo/astro-virgo-3.8.2.tar.gz
+	rm -rf debian/aquila-radio-astronomy/usr/lib/python3/dist-packages/bin
 	install -D -m 644 packaging/linux/aquila-radio-astronomy.desktop \
 	    debian/aquila-radio-astronomy/usr/share/applications/aquila-radio-astronomy.desktop
 	install -D -m 644 packaging/linux/in.radioastronomy.aquila.metainfo.xml \

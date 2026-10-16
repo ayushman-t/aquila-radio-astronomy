@@ -48,9 +48,9 @@ credential secret is set).
 Every channel is one install with nothing else to fetch:
 
 - deb: `apt install aquila-radio-astronomy` pulls Qt, numpy, scipy, matplotlib, astropy, the
-  SDR tools (Ubuntu's airspy, rtl-sdr, hackrf) and python3-astro-virgo as hard
-  dependencies. Debian does not ship Virgo, so `packaging/apt/virgo-deb.sh` builds it
-  from PyPI and `publish.sh` puts it in the same repo; apt resolves it by itself.
+  SDR tools (Ubuntu's airspy, rtl-sdr, hackrf) as hard dependencies. Debian does
+  not ship Virgo, so `debian/rules` installs it from the PyPI source release into
+  the package itself; one .deb, nothing else to download.
 - snap: Qt and the Python stack inside, Ubuntu's airspy/rtl-sdr/hackrf staged in.
 - MSIX and Windows zip: everything inside, plus the vendors' own x64 tools
   (`airspy_rx` also drives the HydraSDR, which has no Windows build).
@@ -69,8 +69,7 @@ Settings says so when the driver is missing.
 ## Licence note
 
 The app is MIT. The hydrogen-line plots are drawn by Virgo (astro-virgo), which
-is **GPL-3**. Every package includes it (the deb as a hard dependency on
-python3-astro-virgo from our repo, the others inside the bundle), so each
+is **GPL-3**. Every package includes it inside the bundle, so each
 package is a combined work distributed under GPL-3 terms, which MIT allows. The
 app's own source stays MIT; the About box credits Virgo and links its source.
 

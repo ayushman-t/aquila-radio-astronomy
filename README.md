@@ -15,7 +15,7 @@ Packages for Windows, Ubuntu and macOS are on the [Releases](../../releases) pag
 | | |
 |---|---|
 | Windows | `.msix` installer, or the `.zip` to run from any folder |
-| Ubuntu, Debian | the two `.deb` files, installed together: `sudo apt install ./python3-astro-virgo_*.deb ./aquila-radio-astronomy_*.deb`. Or the snap |
+| Ubuntu, Debian | `.deb`, double-click it or `sudo apt install ./aquila-radio-astronomy_*.deb`. Or the snap |
 | macOS | `.dmg`. It is not signed yet: right-click the app and choose Open the first time |
 
 From source, with Python 3.10 or newer:

@@ -23,3 +23,13 @@ License: MIT
  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  THE SOFTWARE.
+
+Files: usr/lib/python3/dist-packages/virgo/*
+Copyright: Apostolos Spanakis-Misirlis and contributors
+Comment: Virgo (astro-virgo 3.8.2, https://github.com/0xCoto/Virgo), installed
+ from the PyPI source release at package build time.
+License: GPL-3
+ This program is free software: you can redistribute it and/or modify it under
+ the terms of the GNU General Public License as published by the Free Software
+ Foundation, either version 3 of the License, or (at your option) any later
+ version. On Debian systems the full text is in /usr/share/common-licenses/GPL-3.

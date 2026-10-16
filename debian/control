@@ -3,7 +3,7 @@ Section: science
 Priority: optional
 Maintainer: Ayushman Tripathi <ayushmantripathi7724@gmail.com>
 Build-Depends: debhelper-compat (= 13), dh-python, pybuild-plugin-pyproject,
- python3-all, python3-setuptools
+ python3-all, python3-setuptools, python3-pip, python3-wheel
 Standards-Version: 4.6.2
 Homepage: https://www.radioastronomy.in/
 Rules-Requires-Root: no
@@ -13,7 +13,7 @@ Architecture: all
 Depends: ${python3:Depends}, ${misc:Depends},
  python3-pyside6.qtcore, python3-pyside6.qtgui, python3-pyside6.qtwidgets,
  python3-pyqtgraph, python3-numpy, python3-scipy, python3-matplotlib,
- python3-astropy, python3-astro-virgo, airspy, rtl-sdr, hackrf
+ python3-astropy, airspy, rtl-sdr, hackrf
 Suggests: hydrasdr-host-tools
 Description: Narrowband SETI survey and hydrogen line with a dish and an SDR
  Point the dish, plug in the SDR, press Start. Aquila streams the receiver
@@ -24,5 +24,4 @@ Description: Narrowband SETI survey and hydrogen line with a dish and an SDR
  .
  Works with Airspy, HydraSDR, RTL-SDR and HackRF. Several nodes can be watched
  from one desktop over the network. One install brings the SDR tools and
- the hydrogen line plotting (python3-astro-virgo, GPL-3, from the same
- repository) with it.
+ the hydrogen line plotting (Virgo, GPL-3, inside this package) with it.
