@@ -27,10 +27,11 @@ credential secret is set).
    `snapcraft export-login creds.txt` and put the file's content in the repo
    secret `SNAPCRAFT_STORE_CREDENTIALS`. The workflow then publishes every tag to
    the `edge` channel; promote to `stable` from the web dashboard.
-3. **Microsoft Store**: Partner Center developer account (one-time fee, individual
-   tier). Reserve the name "Aquila Radio Astronomy", copy the Identity Name and Publisher it
-   assigns into `packaging/windows/AppxManifest.xml`. Upload the MSIX from the
-   release. The Store signs it. Reviewers only check that it installs and opens;
+3. **Microsoft Store**: account and product exist (16 Oct 2026), Store ID
+   9N79NN5HNZVS, https://apps.microsoft.com/detail/9N79NN5HNZVS. The Identity values
+   in `packaging/windows/AppxManifest.xml` are the ones Partner Center assigned.
+   Upload the MSIX from the release workflow's `windows` artifact (it is left off
+   the GitHub release on purpose, unsigned it installs nowhere). The Store signs it. Reviewers only check that it installs and opens;
    the app opens fine with no SDR attached (Quick setup, synthetic source).
 4. **apt repo**: a GPG signing key kept off CI (`gpg --quick-gen-key
    "Aquila Radio Astronomy apt <apt@radioastronomy.in>"`), the public key exported to

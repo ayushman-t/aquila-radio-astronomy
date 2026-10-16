@@ -94,6 +94,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with: {path: artifacts, merge-multiple: true}
+      # the MSIX is for the Store upload only; unsigned it cannot be installed by hand
+      - run: rm -f artifacts/*.msix && ls -l artifacts
       - uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
