@@ -1,3 +1,11 @@
+aquila-radio-astronomy (0.2.1) unstable; urgency=medium
+
+  * Virgo ships inside the package: one file to install.
+  * Hydrogen line only or with the narrowband search, chosen in Quick setup or Settings.
+  * Fixed the Windows Store package build.
+
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Fri, 16 Oct 2026 11:23:18 -0400
+
 aquila-radio-astronomy (0.2.0) unstable; urgency=medium
 
   * First packaged release: desktop app, node service, Quick setup, USB receiver
