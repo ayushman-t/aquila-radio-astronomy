@@ -32,7 +32,24 @@ def altaz_to_radec(az, el, lat, lon, t_unix):
     if math.sin(az_r) > 0:
         ha = -ha
     ra = (lst_hours(t_unix, lon) * 15.0 - math.degrees(ha)) % 360.0
-    return ra, math.degrees(dec)
+    return to_j2000(ra, math.degrees(dec), t_unix)
+
+
+def to_j2000(ra_deg, dec_deg, t_unix):
+    """Precess equinox-of-date coordinates back to J2000, so the dish marker sits on
+    the same frame as the background image and the galactic plane (Meeus ch. 21)."""
+    T = (t_unix / 86400.0 + 2440587.5 - 2451545.0) / 36525.0
+    zeta = math.radians((2306.2181 * T + 0.30188 * T * T + 0.017998 * T ** 3) / 3600.0)
+    z = math.radians((2306.2181 * T + 1.09468 * T * T + 0.018203 * T ** 3) / 3600.0)
+    theta = math.radians((2004.3109 * T - 0.42665 * T * T - 0.041833 * T ** 3) / 3600.0)
+    ra, dec = math.radians(ra_deg), math.radians(dec_deg)
+    # inverse rotation: date -> J2000
+    a = math.cos(dec) * math.sin(ra - z)
+    b = math.cos(theta) * math.cos(dec) * math.cos(ra - z) + math.sin(theta) * math.sin(dec)
+    c = -math.sin(theta) * math.cos(dec) * math.cos(ra - z) + math.cos(theta) * math.sin(dec)
+    ra0 = (math.atan2(a, b) - zeta) % (2 * math.pi)
+    dec0 = math.asin(max(-1.0, min(1.0, c)))
+    return math.degrees(ra0), math.degrees(dec0)
 
 
 def radec_to_galactic(ra_deg, dec_deg):
