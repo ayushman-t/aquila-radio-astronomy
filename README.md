@@ -1,12 +1,12 @@
 # Aquila Radio Astronomy
 
-Desktop app and observing node for a small dish and a cheap SDR. It does two things with one observation: a narrowband drift search across the band, and hydrogen line spectra of whatever the dish is looking at. Point the dish, plug in the receiver, press Start.
+Desktop app and observing node for a dish and an SDR. It does two things with one observation: hydrogen line spectra of whatever the dish is looking at, and a narrowband drift search across the band. Point the dish, plug in the receiver, press Start.
 
 Works with Airspy, HydraSDR, RTL-SDR and HackRF. Runs on Windows, Linux and macOS, and as a headless node on a Raspberry Pi. Several nodes can be watched from one desktop over the network.
 
 Ayushman Tripathi, [radioastronomy.in](https://radioastronomy.in/). MIT licence.
 
-![narrowband search](docs/survey.png)
+![hydrogen line](docs/hline.png)
 
 ## Install
 
@@ -29,7 +29,7 @@ A source install needs the vendor tool for your receiver on PATH: `airspy_rx`, `
 
 ## First run
 
-The app opens on a Quick setup page with everything filled in: the receiver it found, the centre frequency, where the dish points. Check it, press Save, then Start observing.
+The app opens on a Quick setup page with everything filled in: the receiver it found, the centre frequency, where the dish points. Choose hydrogen line only or the narrowband search as well, press Save, then Start observing. The choice can be changed any time in Settings; with the search off its tabs are hidden.
 
 ![quick setup](docs/setup.png)
 
@@ -39,9 +39,9 @@ Settings has the rest, with working defaults. Advanced values live in the config
 
 **Narrowband search.** Every 150 s block of the receiver goes through a 2^20 point FFT into a waterfall a few Hz per channel. Every channel is divided by its own median over the block, which flattens the passband and anything fixed in frequency; a drifting signal survives. Every integer channel shift across the block is then tried, a de-Doppler search, and channels above threshold are logged as hits with their drift, width and how many rows of the block they occupy. Strong steady carriers go to a separate list. Hits are linked across blocks offline: a track that drifts relative to the receiver's own reference and lasts a beam transit is tier A; a frequency seen at widely separated times of the same day cannot be the sky and is dropped.
 
-**Hydrogen line.** The same block is binned to 1024 channels and written as a [virgo](https://github.com/0xCoto/VIRGO) scan, so the line plots update every block while the search runs. Take one receiver reference, a 50 ohm terminator on the LNA or a patch of cold sky, and every scan after that is calibrated. A hydrogen-line-only mode exists for machines too weak for the big FFT.
+![narrowband search](docs/survey.png)
 
-![hydrogen line](docs/hline.png)
+**Hydrogen line.** The same block is binned to 1024 channels and written as a [virgo](https://github.com/0xCoto/VIRGO) scan, so the line plots update every block while the search runs. Take one receiver reference, a 50 ohm terminator on the LNA or a patch of cold sky, and every scan after that is calibrated. A hydrogen-line-only mode exists for machines too weak for the big FFT.
 
 **Nothing piles up.** Raw samples never touch the disk, memory is fixed, and disk use is capped, so a node runs for months unattended. What is kept: hit tables, a thumbnail per block, small snippets around the strongest hits, the hydrogen line scans.
 

@@ -792,6 +792,11 @@ class Settings(QDialog):
         self.auto_login.setChecked(autostart.enabled())
         self.auto_obs = QCheckBox("Start observing as soon as the app opens")
         self.auto_obs.setChecked(bool((cfg.get("app") or {}).get("observe_on_open")))
+        self.narrow = QCheckBox("Narrowband search as well as the hydrogen line")
+        self.narrow.setChecked((cfg.get("app") or {}).get("narrowband", True))
+        self.narrow.setToolTip("Off: the app observes the hydrogen line only and the search "
+                               "tabs are hidden. Change it any time.")
+        form.addRow("Observe:", self.narrow)
         form.addRow("Startup:", self.auto_login)
         form.addRow("", self.auto_obs)
         snote = QLabel("Tick both and a node comes back by itself after a power cut, once "
@@ -903,7 +908,8 @@ class Settings(QDialog):
             c["_state_dir_set"] = True
         c["save"] = {"csv": self.s_csv.isChecked(), "plots": self.s_plots.isChecked(),
                      "spectra": self.s_spectra.isChecked(), "raw_iq": self.s_raw.isChecked()}
-        c["app"] = dict(c.get("app") or {}, observe_on_open=self.auto_obs.isChecked())
+        c["app"] = dict(c.get("app") or {}, observe_on_open=self.auto_obs.isChecked(),
+                        narrowband=self.narrow.isChecked())
         c["_autostart"] = self.auto_login.isChecked()
         c["center_mhz"] = self.freq.value()
         c["sample_rate"] = int(self.rate.currentData() or 0)
@@ -958,6 +964,14 @@ class QuickSetup(QDialog):
         self._scan = Call(sdr.attached)
         self._scan.done.connect(lambda names, found=found: self._scanned(names, found))
         self._scan.start()
+        self.mode = QComboBox()
+        self.mode.addItem("Hydrogen line only", False)
+        self.mode.addItem("Hydrogen line and narrowband search", True)
+        self.mode.setCurrentIndex(1 if (cfg.get("app") or {}).get("narrowband", True) else 0)
+        self.mode.setToolTip("The narrowband search looks for drifting signals across the "
+                             "band in the same observation. Can be turned on or off later "
+                             "in Settings.")
+        form.addRow("Observe:", self.mode)
         self.freq = Settings._spin(0, 30000, cfg["center_mhz"], 4, " MHz")
         form.addRow("Centre frequency:", self.freq)
         d = cfg["dish"]
@@ -1034,6 +1048,7 @@ class QuickSetup(QDialog):
         c["_state_dir_set"] = self.cfg.get("_state_dir_set")
         c["name"] = self.name.text().strip() or "my-dish"
         c["sdr"] = self.sdr.currentData()
+        c["app"] = dict(c.get("app") or {}, narrowband=bool(self.mode.currentData()))
         c["center_mhz"] = self.freq.value()
         c["dish"].update({"az": self.az.value(), "el": self.el.value(),
                           "diameter_m": self.dia.value()})
@@ -1077,7 +1092,7 @@ class Main(QMainWindow):
             # a service or an earlier copy of the app is observing already: leave it
             self.sb.showMessage(f"Not started: the data folder is in use (pid {other})", 15000)
             return
-        self.start("run")
+        self.start("run" if self.narrowband() else "hline")
 
     def first_run(self):
         self.quick_setup()
@@ -1102,6 +1117,7 @@ class Main(QMainWindow):
         self.cfg = config.load(self.cfg_path)     # state_dir follows the name until set by hand
         self.nodes[0] = Node(self.cfg["name"] + " (this computer)", self.cfg["state_dir"])
         self._fill_nodes()
+        self._apply_mode()
         if self.proc is not None and self.proc.state() != QProcess.NotRunning:
             QMessageBox.information(
                 self, "Settings", "Dish pointing and site apply from the next block. "
@@ -1257,7 +1273,7 @@ class Main(QMainWindow):
         outer.setSizes([600, 220])
         outer.setStretchFactor(0, 3)
         outer.setStretchFactor(1, 1)
-        tabs.addTab(outer, "Narrowband search")
+        self.sv_tab = tabs.addTab(outer, "Narrowband search")
 
         # Hydrogen line
         w = QSplitter(Qt.Vertical)
@@ -1312,7 +1328,7 @@ class Main(QMainWindow):
         w.setSizes([560, 260])
         w.setStretchFactor(0, 3)
         w.setStretchFactor(1, 1)
-        tabs.addTab(w, "Hydrogen line")
+        self.hl_tab = tabs.addTab(w, "Hydrogen line")
 
         # Candidates
         w = QWidget()
@@ -1331,7 +1347,7 @@ class Main(QMainWindow):
         self.c_thumb = ImagePane("Select a candidate to see its block.")
         right.addWidget(self.c_thumb, 1)
         lay.addLayout(right, 2)
-        tabs.addTab(w, "Candidates")
+        self.c_tab = tabs.addTab(w, "Candidates")
 
         # Log
         self.log = QPlainTextEdit()
@@ -1342,6 +1358,20 @@ class Main(QMainWindow):
         self.log_tab = tabs.addTab(self.log, "Log")
         self.tabs = tabs
         tabs.currentChanged.connect(lambda i: i == self.log_tab and self.refresh(force=True))
+        self._apply_mode()
+
+    def narrowband(self):
+        return bool((self.cfg.get("app") or {}).get("narrowband", True))
+
+    def _apply_mode(self):
+        """Hydrogen line only: the search tabs go away and Start runs the line alone."""
+        nb = self.narrowband()
+        self.tabs.setTabVisible(self.sv_tab, nb)
+        self.tabs.setTabVisible(self.c_tab, nb)
+        self.a_seti.setVisible(nb)
+        self.a_hline.setText("Start hydrogen line only" if nb else "Start observing")
+        if not nb and self.tabs.currentIndex() in (self.sv_tab, self.c_tab):
+            self.tabs.setCurrentIndex(self.hl_tab)
 
         self.sb = self.statusBar()
         self.sb_label = QLabel("")
@@ -2173,7 +2203,7 @@ class Main(QMainWindow):
                                                Qt.SmoothTransformation))
         box.setText(
             f"Aquila Radio Astronomy {__version__}\n\nNarrowband search and hydrogen line "
-            "observing for small dishes.\n\nAyushman Tripathi\n"
+            "observing with a dish and an SDR.\n\nAyushman Tripathi\n"
             "www.radioastronomy.in\n\n"
             "MIT licence: free for anyone to use and modify.\n\n"
             "Hydrogen line plots by Virgo (astro-virgo, GPL-3), "

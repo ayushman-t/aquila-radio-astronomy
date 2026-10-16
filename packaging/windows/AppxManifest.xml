@@ -9,7 +9,7 @@
   <Properties>
     <DisplayName>Aquila Radio Astronomy</DisplayName>
     <PublisherDisplayName>radioastronomy.in</PublisherDisplayName>
-    <Description>Narrowband SETI survey and hydrogen line for a small dish and a cheap SDR</Description>
+    <Description>Narrowband SETI survey and hydrogen line with a dish and an SDR</Description>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
   <Dependencies>

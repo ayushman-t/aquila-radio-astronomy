@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "aquila-radio-astronomy"
 version = "0.2.0"
-description = "Narrowband SETI survey and hydrogen line for small dishes and cheap SDRs"
+description = "Narrowband SETI survey and hydrogen line with a dish and an SDR"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [{name = "Ayushman Tripathi"}]

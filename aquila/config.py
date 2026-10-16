@@ -57,6 +57,7 @@ DEFAULTS = {
     "hline": {},                   # overrides for aquila.hline.DEFAULTS
     "app": {
         "observe_on_open": False,  # the desktop app starts observing as soon as it opens
+        "narrowband": True,        # False: hydrogen line only, the search tabs are hidden
     },
     "save": {
         "csv": True,               # hits.csv, rfi.csv, scans.csv

@@ -2,7 +2,7 @@
 Type=Application
 Name=Aquila Radio Astronomy
 GenericName=Radio telescope survey
-Comment=Narrowband SETI survey and hydrogen line for a small dish and a cheap SDR
+Comment=Narrowband SETI survey and hydrogen line with a dish and an SDR
 Exec=aquila-gui
 Icon=aquila-radio-astronomy
 Terminal=false

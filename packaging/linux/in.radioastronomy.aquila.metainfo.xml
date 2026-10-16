@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>in.radioastronomy.aquila</id>
   <name>Aquila Radio Astronomy</name>
-  <summary>Narrowband SETI survey and hydrogen line for a small dish and a cheap SDR</summary>
+  <summary>Narrowband SETI survey and hydrogen line with a dish and an SDR</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <developer_name>Ayushman Tripathi</developer_name>

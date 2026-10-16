@@ -1,6 +1,6 @@
 name: aquila-radio-astronomy
 title: Aquila Radio Astronomy
-summary: Narrowband SETI survey and hydrogen line for a small dish and a cheap SDR
+summary: Narrowband SETI survey and hydrogen line with a dish and an SDR
 description: |
   Point the dish, plug in the SDR, press Start. Aquila streams the receiver
   through a fine FFT, searches every block for drifting narrowband signals and

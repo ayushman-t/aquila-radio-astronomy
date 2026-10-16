@@ -15,7 +15,7 @@ Depends: ${python3:Depends}, ${misc:Depends},
  python3-pyqtgraph, python3-numpy, python3-scipy, python3-matplotlib,
  python3-astropy, python3-astro-virgo, airspy, rtl-sdr, hackrf
 Suggests: hydrasdr-host-tools
-Description: Narrowband SETI survey and hydrogen line for small dishes and cheap SDRs
+Description: Narrowband SETI survey and hydrogen line with a dish and an SDR
  Point the dish, plug in the SDR, press Start. Aquila streams the receiver
  through a fine FFT, searches every block for drifting narrowband signals and
  keeps only the hits and small pictures. The same observation gives calibrated
