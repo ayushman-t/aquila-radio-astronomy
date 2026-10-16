@@ -217,32 +217,6 @@ class Probe(QThread):
         self.done.emit(sdr.probe(self.cfg))
 
 
-class BgFetch:
-    """Background download on a daemon thread; never blocks exit."""
-
-    def __init__(self, on_done):
-        import threading
-        self.result = None
-        self.done = False
-        self.on_done = on_done
-        t = threading.Thread(target=self._run, daemon=True)
-        t.start()
-        self.timer = QTimer()
-        self.timer.timeout.connect(self._poll)
-        self.timer.start(1000)
-
-    def _run(self):
-        try:
-            self.result = skymap.background(fetch=True)
-        finally:
-            self.done = True
-
-    def _poll(self):
-        if self.done:
-            self.timer.stop()
-            self.on_done(self.result)
-
-
 class Node:
     """A state directory, local (path) or remote (http://host:port)."""
 
@@ -576,12 +550,6 @@ class SkyMap(QWidget):
         self.credit = QLabel("")
         self.credit.setStyleSheet("color: #777;")
         lay.addWidget(self.credit)
-        # the only thing the app ever fetches from the internet, and only on request
-        self.bg_btn = QPushButton("Download sky background (2 MB, once, from CDS Strasbourg)")
-        self.bg_btn.setToolTip(skymap.CREDIT)
-        self.bg_btn.clicked.connect(self.fetch_background)
-        self.bg_btn.hide()
-        lay.addWidget(self.bg_btn, 0, Qt.AlignLeft)
         lay.addStretch(1)
         self._bg_done = False
 
@@ -600,28 +568,10 @@ class SkyMap(QWidget):
         super().resizeEvent(e)
 
     def load_background(self):
-        """Show the cached background if there is one; never downloads by itself."""
         if self._bg_done:
             return
         self._bg_done = True
-        p = skymap.background(fetch=False)
-        if p:
-            self.set_background(p)
-        else:
-            self.bg_btn.show()
-
-    def fetch_background(self):
-        self.bg_btn.setEnabled(False)
-        self.bg_btn.setText("Downloading...")
-        self._bg = BgFetch(self._fetched)
-
-    def _fetched(self, p):
-        if p:
-            self.set_background(p)
-            self.bg_btn.hide()
-        else:
-            self.bg_btn.setEnabled(True)
-            self.bg_btn.setText("Download failed, try again (2 MB, from CDS Strasbourg)")
+        self.set_background(skymap.background())
 
     def set_background(self, p):
         if p:

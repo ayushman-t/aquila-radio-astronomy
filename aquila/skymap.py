@@ -1,20 +1,16 @@
 # Aquila Radio Astronomy. Ayushman Tripathi, www.radioastronomy.in
 # MIT licence: free for anyone to use and modify.
 """Where the dish points on the sky. Pure numpy maths (no astropy): horizon to
-equatorial, equatorial to galactic, the galactic plane track, and an optional
-all-sky background image fetched once from the CDS hips2fits service into the
-user's cache (Mellinger optical panorama, credit shown on the map). Without the
-image the map still draws, just on a plain background."""
+equatorial, equatorial to galactic, the galactic plane track. The background is
+the ESO/S. Brunier Milky Way panorama (CC BY 4.0), reprojected once from galactic
+to equatorial coordinates and shipped with the app, so nothing is downloaded."""
 import math
 import os
-import urllib.request
 
 import numpy as np
 
-HIPS_URL = ("https://alasky.cds.unistra.fr/hips-image-services/hips2fits"
-            "?hips=CDS%2FP%2FMellinger%2Fcolor&width=1800&height=900&projection=CAR"
-            "&coordsys=icrs&ra=0&dec=0&fov=360&format=png")
-CREDIT = "Background: A. Mellinger optical panorama via CDS hips2fits"
+BACKGROUND = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "sky.jpg")
+CREDIT = "Background: ESO/S. Brunier Milky Way panorama (CC BY 4.0)"
 
 RA_NGP, DEC_NGP, L_NCP = math.radians(192.85948), math.radians(27.12825), math.radians(122.93192)
 
@@ -81,28 +77,9 @@ def split_wrap(x, y, wrap=180.0):
     return [(x[i], y[i]) for i in np.split(np.arange(len(x)), cut + 1) if len(i) > 1]
 
 
-def cache_path():
-    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
-    new = os.path.join(base, "aquila-radio-astronomy", "skymap_mellinger.png")
-    old = os.path.join(base, "aquila-seti", "skymap_mellinger.png")
-    return old if os.path.exists(old) and not os.path.exists(new) else new
-
-
-def background(fetch=True, timeout=30):
-    """Path to the cached all-sky PNG, downloading it once if allowed. None if unavailable."""
-    p = cache_path()
-    if os.path.exists(p) and os.path.getsize(p) > 10000:
-        return p
-    if not fetch:
-        return None
-    try:
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-        with urllib.request.urlopen(HIPS_URL, timeout=timeout) as r, open(p + ".tmp", "wb") as f:
-            f.write(r.read())
-        os.replace(p + ".tmp", p)
-        return p
-    except Exception:
-        return None
+def background():
+    """Path to the all-sky image, or None if the file is missing."""
+    return BACKGROUND if os.path.exists(BACKGROUND) else None
 
 
 def pointing(cfg, t_unix):

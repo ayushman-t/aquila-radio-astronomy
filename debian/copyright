@@ -33,3 +33,11 @@ License: GPL-3
  the terms of the GNU General Public License as published by the Free Software
  Foundation, either version 3 of the License, or (at your option) any later
  version. On Debian systems the full text is in /usr/share/common-licenses/GPL-3.
+
+Files: aquila/assets/sky.jpg
+Copyright: ESO/S. Brunier
+Comment: The Milky Way panorama, https://www.eso.org/public/images/eso0932a/,
+ reprojected from galactic to equatorial coordinates for the sky map.
+License: CC-BY-4.0
+ Creative Commons Attribution 4.0 International,
+ https://creativecommons.org/licenses/by/4.0/

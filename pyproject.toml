@@ -25,7 +25,7 @@ aquila-gui = "aquila.cli:gui_entry"
 include = ["aquila*"]
 
 [tool.setuptools.package-data]
-aquila = ["assets/*.png"]
+aquila = ["assets/*.png", "assets/*.jpg"]
 
 [tool.ruff]
 line-length = 100
