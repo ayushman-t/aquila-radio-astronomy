@@ -25,7 +25,7 @@ pip install ".[gui,hline]"
 aquila gui
 ```
 
-A source install needs the vendor tool for your receiver on PATH: `airspy_rx`, `hydrasdr_rx`, `rtl_sdr` or `hackrf_transfer`. On Windows the receiver also needs the WinUSB driver once, which [Zadig](https://zadig.akeo.ie/) installs; the app tells you when that is the problem.
+A source install needs the vendor tool for your receiver on PATH: `airspy_rx`, `hydrasdr_rx`, `rtl_sdr` or `hackrf_transfer`. On Windows the receiver runs on the WinUSB driver: Airspy, HydraSDR and HackRF get it from Windows by themselves when first plugged in, an RTL-SDR needs it installed once with [Zadig](https://zadig.akeo.ie/); the app tells you when that is the problem.
 
 ## First run
 

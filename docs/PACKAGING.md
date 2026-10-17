@@ -62,8 +62,10 @@ Every channel is one install with nothing else to fetch:
 The frozen builds look for SDR tools in a `tools` folder next to the executable
 first (`aquila.sdr.which`), then PATH and the Homebrew paths.
 
-The one thing no package can install is the Windows USB driver: Airspy, HydraSDR,
-HackRF and RTL-SDR need WinUSB via Zadig once per device. The Check button in
+The one thing no package can install is the Windows USB driver. Airspy, HydraSDR
+and HackRF carry Microsoft OS descriptors, so Windows binds its own WinUSB driver
+the first time they are plugged in (verified on the HydraSDR: service WINUSB,
+winusb.inf, no Zadig). An RTL-SDR needs WinUSB via Zadig once. The Check button in
 Settings says so when the driver is missing.
 
 ## Licence note
@@ -87,9 +89,9 @@ the MSIX manifest must agree with it (the Windows and snap builds read it from
 
 ## Drivers
 
-- Windows: Airspy, HydraSDR and HackRF need the WinUSB driver (Zadig) once;
-  RTL-SDR too. The Settings page's Check button reports a clear message when the
-  driver is missing.
+- Windows: Airspy, HydraSDR and HackRF get WinUSB from Windows automatically;
+  RTL-SDR needs Zadig once. The Settings page's Check button reports a clear
+  message when the driver is missing.
 - Linux deb and snap: the vendor packages install the udev rules; the snap needs
   `snap connect aquila-radio-astronomy:raw-usb`.
 - macOS: Homebrew tools need no driver.

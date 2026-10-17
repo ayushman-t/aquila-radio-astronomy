@@ -2163,6 +2163,15 @@ class Main(QMainWindow):
         box.exec()
 
 
+def flush_std():
+    """Flush stdout and stderr before a hard exit. A windowed build (PyInstaller
+    console=False) has neither, so None is the normal case there."""
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None:
+            with contextlib.suppress(OSError, ValueError):
+                stream.flush()
+
+
 def main(cfg_path=None):
     app = QApplication(sys.argv)
     app.setApplicationName("Aquila Radio Astronomy")
@@ -2179,8 +2188,7 @@ def main(cfg_path=None):
     w.show()
     rc = app.exec()
     # a worker thread still waiting on a dead node must not abort the exit
-    sys.stdout.flush()
-    sys.stderr.flush()
+    flush_std()
     os._exit(rc)
 
 
