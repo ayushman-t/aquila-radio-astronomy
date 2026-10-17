@@ -1,3 +1,11 @@
+aquila-radio-astronomy (0.2.2) unstable; urgency=medium
+
+  * Sky map background is the Gaia all-sky map, bundled, nothing downloaded.
+  * Sky map coordinates precessed to J2000.
+  * Windows: 64-bit SDR tools (the 0.2.1 zip shipped 32-bit DLLs), HackRF tools included.
+
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Sat, 17 Oct 2026 07:10:00 +0530
+
 aquila-radio-astronomy (0.2.1) unstable; urgency=medium
 
   * Virgo ships inside the package: one file to install.

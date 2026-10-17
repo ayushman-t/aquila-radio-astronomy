@@ -15,7 +15,6 @@ New-Item -ItemType Directory -Force tools, build\dl | Out-Null
 $dl = @{
   airspy = "https://github.com/airspy/airspyone_host/releases/download/v1.0.10/airspy_host_tools_win32_x86_x64_v1_0_10.zip"
   rtlsdr = "https://github.com/rtlsdrblog/rtl-sdr-blog/releases/download/V1.4.0/Release.zip"
-  hackrf = "https://github.com/greatscottgadgets/hackrf/releases/download/v2026.01.3/hackrf-2026.01.3.zip"
 }
 foreach ($k in $dl.Keys) {
   $zip = "build\dl\$k.zip"
@@ -27,7 +26,11 @@ foreach ($k in $dl.Keys) {
 # "x86_x64"), so match the x64 directory itself, not the whole path
 Get-ChildItem build\dl\airspy -Recurse -Include airspy_rx.exe, airspy_info.exe, *.dll | Where-Object { $_.DirectoryName -match "[\\/]x64$" } | Copy-Item -Destination tools -Force
 Get-ChildItem build\dl\rtlsdr -Recurse -Include rtl_sdr.exe, rtl_test.exe, rtl_biast.exe, *.dll | Where-Object { $_.DirectoryName -match "[\\/]x64$" } | Copy-Item -Destination tools -Force
-Get-ChildItem build\dl\hackrf -Recurse -Include hackrf_transfer.exe, hackrf_info.exe, *.dll | Where-Object { $_.FullName -match "(?i)win|x64" } | Copy-Item -Destination tools -Force
+# HackRF publishes no Windows binaries; CI installs the MSYS2 ucrt64 package and
+# points HACKRF_BIN at its bin folder (hackrf_transfer + libhackrf + winpthread)
+if ($env:HACKRF_BIN -and (Test-Path "$env:HACKRF_BIN\hackrf_transfer.exe")) {
+  foreach ($f in "hackrf_transfer.exe", "hackrf_info.exe", "libhackrf.dll", "libwinpthread-1.dll") { Copy-Item "$env:HACKRF_BIN\$f" tools -Force }
+} else { Write-Host "HACKRF_BIN not set: HackRF tools left out" }
 Get-ChildItem tools | Select-Object -ExpandProperty Name | Write-Host
 
 # 2. icons and the frozen app
