@@ -101,7 +101,8 @@ def load(path=None):
     cfg = json.loads(json.dumps(DEFAULTS))
     if os.path.exists(path):
         try:
-            with open(path) as f:
+            # utf-8-sig: Notepad and PowerShell like to put a byte order mark in front
+            with open(path, encoding="utf-8-sig") as f:
                 user = json.load(f)
         except ValueError as e:
             raise RuntimeError(f"config {path} is not valid JSON: {e}") from None
@@ -144,7 +145,7 @@ def save(cfg, path=None):
     tmp = path + ".tmp"
     # it holds the control token: owner only, and never a half-written file
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(out, f, indent=2)
         f.flush()
         os.fsync(f.fileno())
