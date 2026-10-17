@@ -1,3 +1,11 @@
+aquila-radio-astronomy (0.2.4) unstable; urgency=medium
+
+  * Observing starts by itself as soon as the app opens. Quick setup on the
+    first run still ends with the user's Start, after that the app goes
+    straight to the sky. Turn it off under Settings if you prefer the button.
+
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Sat, 17 Oct 2026 22:30:00 +0530
+
 aquila-radio-astronomy (0.2.3) unstable; urgency=medium
 
   * Windows: the sample stream from the SDR tool went through a text-mode
