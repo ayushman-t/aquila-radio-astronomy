@@ -29,8 +29,8 @@ def test_desktop_quoting_escapes_specials():
     assert autostart._desktop_quote("50%") == "50%%"
 
 
-def test_observe_on_open_defaults_off(tmp_path):
+def test_observe_on_open_defaults_on(tmp_path):
     from aquila import config
     cfg = config.load(str(tmp_path / "none.json"))
-    assert cfg["app"]["observe_on_open"] is False
+    assert cfg["app"]["observe_on_open"] is True
     assert os.path.basename(cfg["state_dir"]) == cfg["name"]
