@@ -1,3 +1,11 @@
+aquila-radio-astronomy (0.2.3) unstable; urgency=medium
+
+  * Windows: the sample stream from the SDR tool went through a text-mode
+    stdout and every 0x0A byte grew a 0x0D, so the spectrum was garbage.
+    The tool now writes to a named pipe. No console windows flash.
+
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Sat, 17 Oct 2026 15:40:00 +0530
+
 aquila-radio-astronomy (0.2.2) unstable; urgency=medium
 
   * Sky map background is the Gaia all-sky map, bundled, nothing downloaded.
