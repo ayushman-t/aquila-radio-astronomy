@@ -34,6 +34,57 @@ def which(tool):
     return shutil.which(tool, path=path)
 
 
+class _NamedPipe:
+    """Server end of a Windows named pipe; the SDR tool writes to its path."""
+    PIPE_ACCESS_INBOUND = 0x1
+    ERROR_PIPE_CONNECTED = 535
+
+    def __init__(self, bufsize):
+        import ctypes
+        self.k = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.k.CreateNamedPipeW.restype = ctypes.c_void_p
+        self.k.CreateNamedPipeW.argtypes = (ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32,
+                                            ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
+                                            ctypes.c_uint32, ctypes.c_void_p)
+        self.k.ConnectNamedPipe.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
+        self.k.CreateFileW.restype = ctypes.c_void_p
+        self.k.CreateFileW.argtypes = (ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32,
+                                       ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32,
+                                       ctypes.c_void_p)
+        self.k.CloseHandle.argtypes = (ctypes.c_void_p,)
+        self.path = rf"\\.\pipe\aquila-{os.getpid()}-{id(self)}"
+        h = self.k.CreateNamedPipeW(self.path, self.PIPE_ACCESS_INBOUND, 0, 1,
+                                    0, bufsize, 0, None)
+        if h is None or h == 2 ** 64 - 1:
+            raise OSError(ctypes.get_last_error(), "CreateNamedPipe failed")
+        self.handle = h
+
+    def connect(self, proc):
+        """Wait for the tool to open the pipe, then return a binary file object.
+        If the tool dies first, the pipe is completed from this side so the
+        reader sees a clean end of stream instead of waiting forever."""
+        import ctypes
+        import msvcrt
+        done = threading.Event()
+        ok = [False]
+
+        def wait():
+            r = self.k.ConnectNamedPipe(self.handle, None)
+            ok[0] = bool(r) or ctypes.get_last_error() == self.ERROR_PIPE_CONNECTED
+            done.set()
+        threading.Thread(target=wait, daemon=True).start()
+        while not done.wait(0.2):
+            if proc.poll() is not None:
+                GENERIC_WRITE, OPEN_EXISTING = 0x40000000, 3
+                c = self.k.CreateFileW(self.path, GENERIC_WRITE, 0, None, OPEN_EXISTING, 0, None)
+                done.wait(2.0)
+                if c not in (None, 2 ** 64 - 1):
+                    self.k.CloseHandle(c)
+                break
+        fd = msvcrt.open_osfhandle(self.handle, os.O_RDONLY)
+        return os.fdopen(fd, "rb", buffering=0)
+
+
 class Source:
     name = "base"
     label = "base"
@@ -68,8 +119,19 @@ class Source:
         cmd = self.command(nsamples)
         cmd[0] = which(cmd[0]) or cmd[0]
         self.errf = tempfile.TemporaryFile()
-        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=self.errf,
-                                     bufsize=frame_samples * self.bytes_per_sample * 4)
+        bufsize = frame_samples * self.bytes_per_sample * 4
+        if sys.platform != "win32":
+            self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=self.errf,
+                                         bufsize=bufsize)
+            return self.proc
+        # The Windows builds of the vendor tools leave stdout in text mode, so a
+        # stream sent to "-" grows a 0x0D before every 0x0A byte and the IQ pairs
+        # drift out of step. A named pipe is opened as a file, in binary mode.
+        pipe = _NamedPipe(bufsize)
+        cmd = [pipe.path if a in ("-", "/dev/stdout") else a for a in cmd]
+        self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=self.errf,
+                                     creationflags=subprocess.CREATE_NO_WINDOW)
+        self.proc.stdout = pipe.connect(self.proc)
         return self.proc
 
     def to_complex(self, raw):
@@ -216,7 +278,8 @@ class RtlSdr(Source):
     def command(self, nsamples):
         biast = which("rtl_biast")
         if self.bias and biast:
-            subprocess.run([biast, "-b", "1"], capture_output=True, timeout=10)
+            subprocess.run([biast, "-b", "1"], capture_output=True, timeout=10,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         return [self.tool, "-f", str(self.center_hz), "-s", str(self.rate),
                 "-g", str(self.gain["gain"]), "-n", str(nsamples), "-"]
 

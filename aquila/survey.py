@@ -291,7 +291,7 @@ class Survey:
         cmd = [sys.executable, "-c", code, self.cfg["state_dir"], json.dumps(args), pkg_root]
         kw = {"stdout": subprocess.DEVNULL}
         if sys.platform == "win32":
-            kw["creationflags"] = 0x00004000          # BELOW_NORMAL_PRIORITY_CLASS
+            kw["creationflags"] = 0x00004000 | subprocess.CREATE_NO_WINDOW   # below normal priority
         try:
             kw["stderr"] = open(os.path.join(self.cfg["state_dir"], "curate.err"), "w")
             self._curator = subprocess.Popen(cmd, **kw)
