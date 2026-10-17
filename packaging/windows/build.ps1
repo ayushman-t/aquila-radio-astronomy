@@ -23,8 +23,10 @@ foreach ($k in $dl.Keys) {
   Expand-Archive $zip -DestinationPath "build\dl\$k" -Force
 }
 # x64 binaries + their DLLs; airspy_rx also drives the HydraSDR (same USB protocol)
-Get-ChildItem build\dl\airspy -Recurse -Include airspy_rx.exe, airspy_info.exe, *.dll | Where-Object { $_.FullName -match "x64" } | Copy-Item -Destination tools -Force
-Get-ChildItem build\dl\rtlsdr -Recurse -Include rtl_sdr.exe, rtl_test.exe, rtl_biast.exe, *.dll | Where-Object { $_.FullName -match "x64" } | Copy-Item -Destination tools -Force
+# the zips hold x86 and x64 side by side (and the airspy zip's root folder is named
+# "x86_x64"), so match the x64 directory itself, not the whole path
+Get-ChildItem build\dl\airspy -Recurse -Include airspy_rx.exe, airspy_info.exe, *.dll | Where-Object { $_.DirectoryName -match "[\\/]x64$" } | Copy-Item -Destination tools -Force
+Get-ChildItem build\dl\rtlsdr -Recurse -Include rtl_sdr.exe, rtl_test.exe, rtl_biast.exe, *.dll | Where-Object { $_.DirectoryName -match "[\\/]x64$" } | Copy-Item -Destination tools -Force
 Get-ChildItem build\dl\hackrf -Recurse -Include hackrf_transfer.exe, hackrf_info.exe, *.dll | Where-Object { $_.FullName -match "(?i)win|x64" } | Copy-Item -Destination tools -Force
 Get-ChildItem tools | Select-Object -ExpandProperty Name | Write-Host
 

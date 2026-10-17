@@ -26,8 +26,11 @@ def which(tool):
     A 'tools' folder next to the app (for bundled installers) is checked first."""
     if not tool:
         return None
-    here = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0] or ".")), "tools")
-    path = os.pathsep.join([here, os.environ.get("PATH", "")] + list(EXTRA_DIRS))
+    exe_dir = os.path.dirname(os.path.abspath(sys.argv[0] or "."))
+    dirs = [os.path.join(exe_dir, "tools")]
+    if getattr(sys, "frozen", False):
+        dirs.append(os.path.join(getattr(sys, "_MEIPASS", exe_dir), "tools"))
+    path = os.pathsep.join(dirs + [os.environ.get("PATH", "")] + list(EXTRA_DIRS))
     return shutil.which(tool, path=path)
 
 
