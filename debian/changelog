@@ -1,3 +1,13 @@
+aquila-radio-astronomy (0.2.5) unstable; urgency=medium
+
+  * Windows: closing the app no longer shows an error about a missing stdout
+    (the windowed build has none).
+  * A config.json saved by Notepad or PowerShell with a byte order mark loads.
+  * Docs: Airspy, HydraSDR and HackRF get WinUSB from Windows by themselves,
+    only an RTL-SDR needs Zadig.
+
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Sun, 18 Oct 2026 02:20:00 +0530
+
 aquila-radio-astronomy (0.2.4) unstable; urgency=medium
 
   * Observing starts by itself as soon as the app opens. Quick setup on the
