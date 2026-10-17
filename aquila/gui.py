@@ -1058,6 +1058,8 @@ class Main(QMainWindow):
             dlg.deleteLater()
         if r == QDialog.Accepted:
             self._save_cfg(dlg.apply())
+            if (self.cfg.get("app") or {}).get("observe_on_open"):
+                QTimer.singleShot(1500, self._observe_on_open)
         elif r == 2:
             self.settings()
 
