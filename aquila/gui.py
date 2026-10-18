@@ -2159,7 +2159,8 @@ class Main(QMainWindow):
             f"Aquila Radio Astronomy {__version__}\n\nNarrowband search and hydrogen line "
             "observing with a dish and an SDR.\n\nAyushman Tripathi\n"
             "www.radioastronomy.in\n\n"
-            "MIT licence: free for anyone to use and modify.\n\n"
+            "MIT licence: free for anyone to use and modify.\n"
+            "Source code: github.com/ayushman-t/aquila-radio-astronomy\n\n"
             "Hydrogen line plots by Virgo (astro-virgo, GPL-3), "
             "github.com/0xCoto/Virgo.")
         box.exec()

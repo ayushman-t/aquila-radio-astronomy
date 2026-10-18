@@ -277,18 +277,7 @@ class Survey:
                     lines = open(err).read().strip().splitlines()
                     tail = lines[-1] if lines else "killed, no message (out of memory?)"
                 self.store.log(f"curate failed ({rc}): {tail}")
-        from .skymap import beam_deg
-        beam = beam_deg(self.cfg["dish"].get("diameter_m"), self.src.center_hz)
-        args = {"beam_deg": beam, "center_hz": self.src.center_hz,
-                "exclude_if_khz": self.adv.get("exclude_if_khz") or [],
-                "snr_thresh": float(self.adv["snr_thresh"]),
-                "comb_window": self.adv.get("comb_period_hz") or [10000, 100000]}
-        # the package's own folder goes last on the path, so a checkout that was never
-        # installed still imports, and nothing installed is shadowed
-        code = ("import sys, json; sys.path.append(sys.argv[3]); from aquila import curate; "
-                "curate.run(sys.argv[1], **json.loads(sys.argv[2]))")
-        pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        cmd = [sys.executable, "-c", code, self.cfg["state_dir"], json.dumps(args), pkg_root]
+        cmd = curate_cmd(self.cfg, self.src.center_hz)
         kw = {"stdout": subprocess.DEVNULL}
         if sys.platform == "win32":
             kw["creationflags"] = 0x00004000 | subprocess.CREATE_NO_WINDOW   # below normal priority
@@ -391,3 +380,28 @@ class Survey:
         self.status("stopped")
         log("stopped")
         release_lock(self.lock)
+
+
+def curate_cmd(cfg, center_hz):
+    """The command line that tiers the hits in a child process.
+
+    A frozen app (PyInstaller) is its own interpreter and takes a verb, so it runs its
+    own `curate` command on the config file. A normal install runs the function
+    directly; the package's own folder goes last on the path, so a checkout that was
+    never installed still imports, and nothing installed is shadowed."""
+    if getattr(sys, "frozen", False):
+        cmd = [sys.executable]
+        if cfg.get("_path"):
+            cmd += ["-c", cfg["_path"]]
+        return cmd + ["curate"]
+    from .skymap import beam_deg
+    adv = cfg["advanced"]
+    args = {"beam_deg": beam_deg(cfg["dish"].get("diameter_m"), center_hz),
+            "center_hz": center_hz,
+            "exclude_if_khz": adv.get("exclude_if_khz") or [],
+            "snr_thresh": float(adv["snr_thresh"]),
+            "comb_window": adv.get("comb_period_hz") or [10000, 100000]}
+    code = ("import sys, json; sys.path.append(sys.argv[3]); from aquila import curate; "
+            "curate.run(sys.argv[1], **json.loads(sys.argv[2]))")
+    pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return [sys.executable, "-c", code, cfg["state_dir"], json.dumps(args), pkg_root]
