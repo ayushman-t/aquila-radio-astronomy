@@ -2042,6 +2042,8 @@ class Main(QMainWindow):
                                        "Node address (http://host:8090):", text=start)
         if ok and url.strip():
             base = url.strip().rstrip("/")
+            if base[:7].upper() in ("HTTP://", "HTTPS:/"):     # Caps Lock is not a folder
+                base = base[:8].lower() + base[8:]
             for k, existing in enumerate(self.nodes):
                 if existing.remote and existing.base == base:
                     self.node_box.setCurrentIndex(k)
