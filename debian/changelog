@@ -1,48 +1,14 @@
-aquila-radio-astronomy (0.2.5) unstable; urgency=medium
+aquila-radio-astronomy (0.2.6) unstable; urgency=medium
 
-  * Windows: closing the app no longer shows an error about a missing stdout
-    (the windowed build has none).
-  * A config.json saved by Notepad or PowerShell with a byte order mark loads.
-  * Docs: Airspy, HydraSDR and HackRF get WinUSB from Windows by themselves,
-    only an RTL-SDR needs Zadig.
+  * Licence: GPL-3.0-or-later (was MIT).
+  * Packaged builds (Windows, macOS): the hit curator runs again, and "open the
+    app at login" writes a command the packaged app accepts.
+  * The observer keeps going when the desktop app that started it is closed or
+    killed, instead of stopping with a traceback.
+  * Snap: a dialog explains the one-time USB permission, with a button to the
+    App Center permissions page.
+  * Connect to node: an address typed with Caps Lock on still works.
+  * About box names the source repository.
 
- -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Sun, 18 Oct 2026 02:20:00 +0530
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Tue, 20 Oct 2026 03:40:00 +0530
 
-aquila-radio-astronomy (0.2.4) unstable; urgency=medium
-
-  * Observing starts by itself as soon as the app opens. Quick setup on the
-    first run still ends with the user's Start, after that the app goes
-    straight to the sky. Turn it off under Settings if you prefer the button.
-
- -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Sat, 17 Oct 2026 22:30:00 +0530
-
-aquila-radio-astronomy (0.2.3) unstable; urgency=medium
-
-  * Windows: the sample stream from the SDR tool went through a text-mode
-    stdout and every 0x0A byte grew a 0x0D, so the spectrum was garbage.
-    The tool now writes to a named pipe. No console windows flash.
-
- -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Sat, 17 Oct 2026 15:40:00 +0530
-
-aquila-radio-astronomy (0.2.2) unstable; urgency=medium
-
-  * Sky map background is the Gaia all-sky map, bundled, nothing downloaded.
-  * Sky map coordinates precessed to J2000.
-  * Windows: 64-bit SDR tools (the 0.2.1 zip shipped 32-bit DLLs), HackRF tools included.
-
- -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Sat, 17 Oct 2026 07:10:00 +0530
-
-aquila-radio-astronomy (0.2.1) unstable; urgency=medium
-
-  * Virgo ships inside the package: one file to install.
-  * Hydrogen line only or with the narrowband search, chosen in Quick setup or Settings.
-  * Fixed the Windows Store package build.
-
- -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Fri, 16 Oct 2026 11:23:18 -0400
-
-aquila-radio-astronomy (0.2.0) unstable; urgency=medium
-
-  * First packaged release: desktop app, node service, Quick setup, USB receiver
-    detection, remote nodes.
-
- -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Thu, 16 Oct 2026 00:00:00 +0530
