@@ -11,6 +11,7 @@ import json
 import math
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -1033,6 +1034,33 @@ class Main(QMainWindow):
             QTimer.singleShot(300, self.first_run)
         elif (self.cfg.get("app") or {}).get("observe_on_open"):
             QTimer.singleShot(3000, self._observe_on_open)
+        if snap_usb_blocked():
+            QTimer.singleShot(600, self.snap_usb_dialog)
+
+    def snap_usb_dialog(self):
+        """The snap cannot open a receiver until the user connects raw-usb; the
+        sandbox does not let the app do it for them, so point at the switch."""
+        from PySide6.QtGui import QDesktopServices, QGuiApplication
+        from PySide6.QtCore import QUrl
+        cmd = f"sudo snap connect {os.environ.get('SNAP_NAME', 'aquila-radio-astronomy')}:raw-usb"
+        box = QMessageBox(self)
+        box.setWindowTitle("Receiver access")
+        box.setIcon(QMessageBox.Information)
+        box.setText("The app needs permission to open USB receivers.")
+        box.setInformativeText(
+            "Snap keeps USB devices closed until you allow it once.\n\n"
+            "Open permissions: in the App Center page that opens, switch on "
+            "\"Access USB hardware directly\" (raw-usb).\n\n"
+            f"Or run this in a terminal:\n{cmd}")
+        b_open = box.addButton("Open permissions", QMessageBox.AcceptRole)
+        b_copy = box.addButton("Copy command", QMessageBox.ActionRole)
+        box.addButton("Later", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is b_open:
+            QDesktopServices.openUrl(QUrl(f"snap://{os.environ.get('SNAP_NAME', 'aquila-radio-astronomy')}"))
+        elif box.clickedButton() is b_copy:
+            QGuiApplication.clipboard().setText(cmd)
+            self.sb.showMessage("Command copied", 8000)
 
     def _observe_on_open(self):
         if self.proc is not None and self.proc.state() != QProcess.NotRunning:
@@ -2164,6 +2192,20 @@ class Main(QMainWindow):
             "Hydrogen line plots by Virgo (astro-virgo, GPL-3), "
             "github.com/0xCoto/Virgo.")
         box.exec()
+
+
+def snap_usb_blocked():
+    """True inside a snap whose raw-usb plug is not connected: no receiver can be
+    opened until the user allows it. snapctl answers from inside the sandbox."""
+    if not os.environ.get("SNAP_NAME"):
+        return False
+    try:
+        rc = subprocess.run(["snapctl", "is-connected", "raw-usb"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            timeout=5).returncode
+    except (OSError, subprocess.SubprocessError):
+        return False            # cannot tell: do not nag
+    return rc != 0
 
 
 def flush_std():
