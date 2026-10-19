@@ -20,10 +20,13 @@ OLD_NAME, OLD_LABEL, OLD_RUN = "aquila-seti", "in.radioastronomy.aquila-seti", "
 def _command(cfg_path):
     """The interpreter running now, so the entry starts this same install."""
     exe = sys.executable
-    if sys.platform == "win32":
-        w = os.path.join(os.path.dirname(exe), "pythonw.exe")
-        exe = w if os.path.exists(w) else exe       # no console window at login
-    cmd = [exe, "-m", "aquila.cli"]
+    if getattr(sys, "frozen", False):
+        cmd = [exe]                 # a PyInstaller build is its own interpreter
+    else:
+        if sys.platform == "win32":
+            w = os.path.join(os.path.dirname(exe), "pythonw.exe")
+            exe = w if os.path.exists(w) else exe   # no console window at login
+        cmd = [exe, "-m", "aquila.cli"]
     if cfg_path:
         cmd += ["-c", os.path.abspath(cfg_path)]
     return cmd + ["gui"]
