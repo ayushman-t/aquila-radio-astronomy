@@ -41,6 +41,7 @@ class Store:
         self.status = os.path.join(state_dir, "status.json")
         self.totals = os.path.join(state_dir, "totals.json")
         self.log_path = os.path.join(state_dir, "survey.log")
+        self._stdout_ok = True
         self.wf_dir = os.path.join(state_dir, "waterfalls")
         self.snip_dir = os.path.join(state_dir, "snippets")
         self.raw_dir = os.path.join(state_dir, "raw")
@@ -53,7 +54,13 @@ class Store:
 
     def log(self, msg):
         line = "{}  {}".format(time.strftime("%Y-%m-%d %H:%M:%S"), msg)
-        print(line, flush=True)
+        if self._stdout_ok:
+            try:
+                print(line, flush=True)
+            except (OSError, ValueError):
+                # the desktop app that was reading this pipe is gone: observing goes on,
+                # survey.log keeps the record (Windows raises EINVAL, not EPIPE)
+                self._stdout_ok = False
         try:
             if os.path.exists(self.log_path) and os.path.getsize(self.log_path) > 5_000_000:
                 replace(self.log_path, self.log_path + ".1")
