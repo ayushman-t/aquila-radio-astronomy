@@ -15,7 +15,7 @@ Packages for Windows, Ubuntu and macOS are on the [Releases](../../releases) pag
 | | |
 |---|---|
 | Windows | `.msix` installer, or the `.zip` to run from any folder |
-| Ubuntu, Debian | `.deb`, double-click it or `sudo apt install ./aquila-radio-astronomy_*.deb`. Or the snap |
+| Ubuntu, Debian | `.deb`, double-click it or `sudo apt install ./aquila-radio-astronomy_*.deb`. Or `snap install aquila-radio-astronomy` |
 | macOS | `.dmg`. It is not signed yet: right-click the app and choose Open the first time |
 
 From source, with Python 3.10 or newer:
@@ -23,6 +23,12 @@ From source, with Python 3.10 or newer:
 ```
 pip install ".[gui,hline]"
 aquila gui
+```
+
+**Snap users, one extra step.** A snap starts with USB closed, so the first time the app opens it shows a dialog, "The app needs permission to open USB receivers". Press Open permissions and switch on USB access in the App Center, or run the line below once. That is all; the deb and the other packages never need it.
+
+```
+sudo snap connect aquila-radio-astronomy:raw-usb
 ```
 
 A source install needs the vendor tool for your receiver on PATH: `airspy_rx`, `hydrasdr_rx`, `rtl_sdr` or `hackrf_transfer`. On Windows the receiver runs on the WinUSB driver: Airspy, HydraSDR and HackRF get it from Windows by themselves when first plugged in, an RTL-SDR needs it installed once with [Zadig](https://zadig.akeo.ie/); the app tells you when that is the problem.
