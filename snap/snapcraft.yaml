@@ -1,16 +1,18 @@
 name: aquila-radio-astronomy
 title: Aquila Radio Astronomy
-summary: Narrowband SETI survey and hydrogen line with a dish and an SDR
+summary: Hydrogen line radio astronomy with a dish and an SDR
 description: |
-  Point the dish, plug in the SDR, press Start. Aquila streams the receiver
-  through a fine FFT, searches every block for drifting narrowband signals and
-  keeps only the hits and small pictures. The same observation gives calibrated
-  hydrogen line plots. Raw samples never touch the disk, memory is fixed and
-  disk use is capped, so a node runs for months on a Raspberry Pi.
+  Aquila Radio Astronomy is a desktop application for observing the 21 cm hydrogen line with a small dish and a software defined radio. It was written for the author's own 2.4 m and 0.9 m dishes and is released free for anyone who wants to do the same.
 
-  Works with Airspy, HydraSDR, RTL-SDR and HackRF (the vendor tools are
-  included). Several nodes can be watched from one desktop over the network.
-  Connect the "raw-usb" interface once so the app can open the receiver:
+  The application controls the receiver, records the observation in blocks and produces a hydrogen line spectrum for each block, together with a map showing where the dish is pointing on the sky. Receiver calibration is part of the application: one reference measurement, taken with a 50 ohm terminator on the LNA or on a patch of cold sky, calibrates every scan that follows, and it can be repeated or removed at any time.
+
+  An optional narrowband drift search can run on the same data. It applies a fine FFT across the whole band, performs a de-Doppler search in every block and records each hit with its drift rate, width and duration. When the search is switched off the application observes the hydrogen line only.
+
+  Supported receivers are the Airspy, HydraSDR, RTL-SDR and HackRF. The receiver tools are bundled, so no separate installation is needed. Raw samples are never written to disk, memory use is fixed and disk use is capped, which allows the application to observe unattended for months. Several observing stations, for example a Raspberry Pi at a remote dish, can be followed from one copy of the application over the network.
+
+  Aquila Radio Astronomy is free and open source under the MIT licence. The hydrogen line plots are produced with Virgo.
+
+  The application needs the raw-usb interface to open the receiver. Connect it once after installing:
     sudo snap connect aquila-radio-astronomy:raw-usb
 website: https://www.radioastronomy.in/
 license: MIT
