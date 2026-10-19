@@ -1,5 +1,5 @@
 # Aquila Radio Astronomy. Ayushman Tripathi, www.radioastronomy.in
-# MIT licence: free for anyone to use and modify.
+# GPL-3.0-or-later: free to use and modify, derived works must stay open.
 """Open the app when the user logs in. One entry per user, nothing system-wide:
 an XDG autostart file on Linux, a Run key on Windows, a LaunchAgent on macOS.
 With "observe when the app opens" also set, a node comes back by itself after

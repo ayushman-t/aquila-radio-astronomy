@@ -1,5 +1,5 @@
 # Aquila Radio Astronomy. Ayushman Tripathi, www.radioastronomy.in
-# MIT licence: free for anyone to use and modify.
+# GPL-3.0-or-later: free to use and modify, derived works must stay open.
 """Per-block thumbnail: waterfall on top, integrated spectrum below, absolute dB,
 x axis in MHz. Small, fast, readable by eye."""
 import matplotlib

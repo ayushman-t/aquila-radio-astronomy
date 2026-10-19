@@ -1,5 +1,5 @@
 # Aquila Radio Astronomy. Ayushman Tripathi, www.radioastronomy.in
-# MIT licence: free for anyone to use and modify.
+# GPL-3.0-or-later: free to use and modify, derived works must stay open.
 """Where the dish points on the sky. Pure numpy maths (no astropy): horizon to
 equatorial, equatorial to galactic, the galactic plane track. The background is
 the ESA Gaia EDR3 all-sky map (ESA/Gaia/DPAC, CC BY-SA 3.0 IGO), drawn from measured

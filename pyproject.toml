@@ -7,7 +7,7 @@ name = "aquila-radio-astronomy"
 version = "0.2.5"
 description = "Narrowband SETI survey and hydrogen line with a dish and an SDR"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "GPL-3.0-or-later"}
 authors = [{name = "Ayushman Tripathi"}]
 urls = {Homepage = "https://www.radioastronomy.in/"}
 requires-python = ">=3.10"

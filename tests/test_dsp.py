@@ -1,5 +1,5 @@
 # Aquila Radio Astronomy. Ayushman Tripathi, www.radioastronomy.in
-# MIT licence: free for anyone to use and modify.
+# GPL-3.0-or-later: free to use and modify, derived works must stay open.
 """Positive control: a drifting tone in noise must come out as one hit at the right
 frequency and drift, and a survey block on the synthetic source must record it."""
 import json

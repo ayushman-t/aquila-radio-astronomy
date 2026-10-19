@@ -4,7 +4,7 @@ Desktop app and observing node for a dish and an SDR. It does two things with on
 
 Works with Airspy, HydraSDR, RTL-SDR and HackRF. Runs on Windows, Linux and macOS, and as a headless node on a Raspberry Pi. Several nodes can be watched from one desktop over the network.
 
-Ayushman Tripathi, [radioastronomy.in](https://radioastronomy.in/). MIT licence.
+Ayushman Tripathi, [radioastronomy.in](https://radioastronomy.in/). GPL-3.0-or-later.
 
 ![hydrogen line](docs/hline.png)
 

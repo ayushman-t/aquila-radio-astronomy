@@ -1,5 +1,5 @@
 # Aquila Radio Astronomy. Ayushman Tripathi, www.radioastronomy.in
-# MIT licence: free for anyone to use and modify.
+# GPL-3.0-or-later: free to use and modify, derived works must stay open.
 """The signal chain. Streaming channelizer, per-channel median normalisation,
 integer-shift de-Doppler search, hit clustering. Pure numpy, memory bounded."""
 import numpy as np

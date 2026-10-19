@@ -1,5 +1,5 @@
 # Aquila Radio Astronomy. Ayushman Tripathi, www.radioastronomy.in
-# MIT licence: free for anyone to use and modify.
+# GPL-3.0-or-later: free to use and modify, derived works must stay open.
 """Desktop app. Plain native widgets, no theme. Shows what a node is doing,
 starts and stops it locally, and reads remote nodes over their API."""
 import calendar
@@ -2159,7 +2159,7 @@ class Main(QMainWindow):
             f"Aquila Radio Astronomy {__version__}\n\nNarrowband search and hydrogen line "
             "observing with a dish and an SDR.\n\nAyushman Tripathi\n"
             "www.radioastronomy.in\n\n"
-            "MIT licence: free for anyone to use and modify.\n"
+            "GPL-3.0-or-later: free to use and modify, derived works must stay open.\n"
             "Source code: github.com/ayushman-t/aquila-radio-astronomy\n\n"
             "Hydrogen line plots by Virgo (astro-virgo, GPL-3), "
             "github.com/0xCoto/Virgo.")

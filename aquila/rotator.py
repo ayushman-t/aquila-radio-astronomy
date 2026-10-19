@@ -1,5 +1,5 @@
 # Aquila Radio Astronomy. Ayushman Tripathi, www.radioastronomy.in
-# MIT licence: free for anyone to use and modify.
+# GPL-3.0-or-later: free to use and modify, derived works must stay open.
 """Live dish pointing from a rotator over the Hamlib rotctld protocol.
 
 Anything that speaks rotctld works: Hamlib's own rotctld in front of a Yaesu, SPID

@@ -1,5 +1,5 @@
 # Aquila Radio Astronomy. Ayushman Tripathi, www.radioastronomy.in
-# MIT licence: free for anyone to use and modify.
+# GPL-3.0-or-later: free to use and modify, derived works must stay open.
 """Everything that touches disk: state dir layout, hit CSVs, status.json,
 footprint caps. The caps make it impossible for the survey to fill a card."""
 import contextlib

@@ -1,5 +1,5 @@
 # Aquila Radio Astronomy. Ayushman Tripathi, www.radioastronomy.in
-# MIT licence: free for anyone to use and modify.
+# GPL-3.0-or-later: free to use and modify, derived works must stay open.
 """Offline curator. Reads hits.csv, writes candidates.csv with a tier per hit,
 candidates_oncomb.csv for the review lane, comb_history.csv as an audit trail and
 curate_summary.json. Runs beside the survey in its own process, reads one file,

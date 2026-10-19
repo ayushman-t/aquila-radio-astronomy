@@ -1,5 +1,5 @@
 # Aquila Radio Astronomy. Ayushman Tripathi, www.radioastronomy.in
-# MIT licence: free for anyone to use and modify.
+# GPL-3.0-or-later: free to use and modify, derived works must stay open.
 """The curator must drop a switching-supply comb, keep a real transit as tier A, and
 never promote a persistent carrier."""
 import os

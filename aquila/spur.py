@@ -1,5 +1,5 @@
 # Aquila Radio Astronomy. Ayushman Tripathi, www.radioastronomy.in
-# MIT licence: free for anyone to use and modify.
+# GPL-3.0-or-later: free to use and modify, derived works must stay open.
 """Learned spur mask. A channel that hits at the same place with no drift in
 several recent blocks is fixed to the instrument, not the sky, and is blanked
 before the search so it stops being rediscovered every block."""

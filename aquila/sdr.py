@@ -1,5 +1,5 @@
 # Aquila Radio Astronomy. Ayushman Tripathi, www.radioastronomy.in
-# MIT licence: free for anyone to use and modify.
+# GPL-3.0-or-later: free to use and modify, derived works must stay open.
 """SDR sources. Each one runs the vendor's command line tool and streams raw IQ
 through a pipe. Raw IQ is never written to disk. A source knows how to start a
 capture of N samples and how to turn one raw frame into complex64.

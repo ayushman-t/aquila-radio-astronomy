@@ -70,10 +70,10 @@ Settings says so when the driver is missing.
 
 ## Licence note
 
-The app is MIT. The hydrogen-line plots are drawn by Virgo (astro-virgo), which
-is **GPL-3**. Every package includes it inside the bundle, so each
-package is a combined work distributed under GPL-3 terms, which MIT allows. The
-app's own source stays MIT; the About box credits Virgo and links its source.
+The app is GPL-3.0-or-later (relicensed from MIT on 19 Oct 2026, sole author).
+The hydrogen-line plots are drawn by Virgo (astro-virgo), also GPL-3, so every
+package is a plain GPL-3 combined work. The About box credits Virgo and links
+its source.
 
 ## Build Python
 

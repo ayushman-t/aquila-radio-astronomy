@@ -1,5 +1,5 @@
 # Aquila Radio Astronomy. Ayushman Tripathi, www.radioastronomy.in
-# MIT licence: free for anyone to use and modify.
+# GPL-3.0-or-later: free to use and modify, derived works must stay open.
 """The survey loop. Capture a block, normalise, search, record, repeat.
 Raw IQ never touches disk. Memory is fixed. Disk is capped."""
 import contextlib

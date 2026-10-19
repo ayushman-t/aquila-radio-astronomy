@@ -1,5 +1,5 @@
 # Aquila Radio Astronomy. Ayushman Tripathi, www.radioastronomy.in
-# MIT licence: free for anyone to use and modify.
+# GPL-3.0-or-later: free to use and modify, derived works must stay open.
 """HTTP view of a node's state directory. Standard library only, so a Pi or a
 phone needs nothing extra. The desktop app talks to this, locally or over the
 network. GET serves small files and never changes anything. The one write is

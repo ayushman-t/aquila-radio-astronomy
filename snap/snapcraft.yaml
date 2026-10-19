@@ -10,12 +10,12 @@ description: |
 
   Supported receivers are the Airspy, HydraSDR, RTL-SDR and HackRF. The receiver tools are bundled, so no separate installation is needed. Raw samples are never written to disk, memory use is fixed and disk use is capped, which allows the application to observe unattended for months. Several observing stations, for example a Raspberry Pi at a remote dish, can be followed from one copy of the application over the network.
 
-  Aquila Radio Astronomy is free and open source under the MIT licence. The hydrogen line plots are produced with Virgo.
+  Aquila Radio Astronomy is free and open source under the GPL-3 licence. The hydrogen line plots are produced with Virgo.
 
   The application needs the raw-usb interface to open the receiver. Connect it once after installing:
     sudo snap connect aquila-radio-astronomy:raw-usb
 website: https://www.radioastronomy.in/
-license: MIT
+license: GPL-3.0-or-later
 adopt-info: aquila
 base: core24
 confinement: strict

@@ -1,5 +1,5 @@
 # Aquila Radio Astronomy. Ayushman Tripathi, www.radioastronomy.in
-# MIT licence: free for anyone to use and modify.
+# GPL-3.0-or-later: free to use and modify, derived works must stay open.
 """Node configuration. One JSON file. The user-facing keys are the first block;
 everything below `advanced` has defaults that work and rarely needs touching."""
 import json

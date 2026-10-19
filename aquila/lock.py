@@ -1,5 +1,5 @@
 # Aquila Radio Astronomy. Ayushman Tripathi, www.radioastronomy.in
-# MIT licence: free for anyone to use and modify.
+# GPL-3.0-or-later: free to use and modify, derived works must stay open.
 """One observer per data folder. An OS file lock held open for the life of the
 process: the kernel drops it on any exit or reboot, so a stale lock cannot
 happen and pid reuse does not matter. The pid inside is only for the message."""

@@ -1,5 +1,5 @@
 # Aquila Radio Astronomy. Ayushman Tripathi, www.radioastronomy.in
-# MIT licence: free for anyone to use and modify.
+# GPL-3.0-or-later: free to use and modify, derived works must stay open.
 """Hydrogen line mode. One scan = a virgo style observation.dat (1024 channels,
 one averaged row per second) plus its .header, then the plot straight from
 virgo: calibrated against a receiver-only cal if one exists, and always the
