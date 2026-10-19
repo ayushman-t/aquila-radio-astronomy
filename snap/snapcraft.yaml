@@ -2,7 +2,7 @@ name: aquila-radio-astronomy
 title: Aquila Radio Astronomy
 summary: Hydrogen line radio astronomy with a dish and an SDR
 description: |
-  Aquila Radio Astronomy is a desktop application for observing the 21 cm hydrogen line with a small dish and a software defined radio. It was written for the author's own 2.4 m and 0.9 m dishes and is released free for anyone who wants to do the same.
+  Aquila Radio Astronomy is a desktop application for observing the 21 cm hydrogen line with a dish and a software defined radio. It runs with any dish, from a 0.9 m grid on a balcony to a multi-metre parabolic, and with the common low-cost receivers.
 
   The application controls the receiver, records the observation in blocks and produces a hydrogen line spectrum for each block, together with a map showing where the dish is pointing on the sky. Receiver calibration is part of the application: one reference measurement, taken with a 50 ohm terminator on the LNA or on a patch of cold sky, calibrates every scan that follows, and it can be repeated or removed at any time.
 
