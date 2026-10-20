@@ -50,6 +50,7 @@ parts:
       - hackrf
       - libusb-1.0-0
       - python3-venv
+      - usbutils
       # Qt's xcb platform plugin links these; the gnome platform snap lacks xcb-cursor
       - libxcb-cursor0
       - libxcb-icccm4

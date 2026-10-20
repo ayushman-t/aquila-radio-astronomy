@@ -1,5 +1,7 @@
 aquila-radio-astronomy (0.2.7) unstable; urgency=medium
 
+  * Snap: the receiver scan works inside the sandbox (sysfs is closed to it), so a
+    HydraSDR is no longer taken for an Airspy and started at a rate it lacks.
   * Settings: bias tee switch (Quick setup pointed at it, it was missing).
   * Snap: opens on X11 desktops (Qt's xcb libraries were not shipped); the
     one-time USB permission dialog shows the command as a code box with a

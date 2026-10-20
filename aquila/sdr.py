@@ -393,7 +393,11 @@ def usb_devices():
     try:
         if sys.platform.startswith("linux"):
             root = "/sys/bus/usb/devices"
-            for d in os.listdir(root):
+            try:
+                entries = os.listdir(root)
+            except OSError:
+                return _usb_devices_lsusb()     # a snap may not read sysfs: ask lsusb
+            for d in entries:
                 p = os.path.join(root, d)
                 try:
                     with open(os.path.join(p, "idVendor")) as f:
@@ -438,6 +442,36 @@ def usb_devices():
     except Exception:
         pass
     return out
+
+
+def _usb_devices_lsusb():
+    """(vid, pid, text) from lsusb, for a sandbox that cannot read sysfs. lsusb names
+    come from the usb.ids table, so an Airspy and a HydraSDR read the same; the
+    airspy tool's firmware line tells them apart."""
+    import re
+    out = []
+    try:
+        r = subprocess.run(["lsusb"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return out
+    for m in re.finditer(r"ID ([0-9a-f]{4}):([0-9a-f]{4})\s*(.*)", r.stdout):
+        vid, pid, text = m.group(1), m.group(2), m.group(3).strip()
+        if (vid, pid) == ("1d50", "60a1"):
+            text = _airspy_firmware() or text
+        out.append((vid, pid, text))
+    return out
+
+
+def _airspy_firmware():
+    """The firmware line from airspy_info ("HydraSDR RFOne v1.0.0" or "AirSpy ...")."""
+    try:
+        r = subprocess.run(["airspy_info"], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    for line in r.stdout.splitlines():
+        if "Firmware" in line:
+            return line.split(":", 1)[-1].strip()
+    return ""
 
 
 def match_usb(devices):
