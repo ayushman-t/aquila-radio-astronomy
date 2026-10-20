@@ -1048,10 +1048,13 @@ class Main(QMainWindow):
         box.setIcon(QMessageBox.Information)
         box.setText("The app needs permission to open USB receivers.")
         box.setInformativeText(
-            "Snap keeps USB devices closed until you allow it once.\n\n"
-            "Open permissions: in the App Center page that opens, switch on "
-            "\"Access USB hardware directly\" (raw-usb).\n\n"
-            f"Or run this in a terminal:\n{cmd}")
+            "Snap keeps USB devices closed until you allow it once. Either way works:\n\n"
+            "1. Open permissions. If you are asked which program to use, choose "
+            "App Center. On the page that opens, under Permissions, switch on "
+            "\"Access USB hardware directly\".\n\n"
+            f"2. Or run this once in a terminal (Copy command puts it on the clipboard):\n"
+            f"{cmd}\n\n"
+            "Then start observing. No restart is needed.")
         b_open = box.addButton("Open permissions", QMessageBox.AcceptRole)
         b_copy = box.addButton("Copy command", QMessageBox.ActionRole)
         box.addButton("Later", QMessageBox.RejectRole)
