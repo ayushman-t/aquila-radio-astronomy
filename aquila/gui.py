@@ -1038,33 +1038,27 @@ class Main(QMainWindow):
             QTimer.singleShot(600, self.snap_usb_dialog)
 
     def snap_usb_dialog(self):
-        """The snap cannot open a receiver until the user connects raw-usb; the
-        sandbox does not let the app do it for them, so point at the switch."""
-        from PySide6.QtCore import QUrl
-        from PySide6.QtGui import QDesktopServices, QGuiApplication
+        """The snap cannot open a receiver until the user connects raw-usb. The
+        sandbox does not let the app do it, and the App Center has no switch for
+        it, so the one route is a command: show it, with a copy button."""
+        from PySide6.QtGui import QGuiApplication
         cmd = f"sudo snap connect {os.environ.get('SNAP_NAME', 'aquila-radio-astronomy')}:raw-usb"
         box = QMessageBox(self)
         box.setWindowTitle("Receiver access")
         box.setIcon(QMessageBox.Information)
-        box.setText("The app needs permission to open USB receivers.")
+        box.setText("One command before the first observation.")
         box.setInformativeText(
-            "Snap keeps USB devices closed until you allow it once. Either way works:\n\n"
-            "1. Open permissions. If you are asked which program to use, choose "
-            "App Center. On the page that opens, under Permissions, switch on "
-            "\"Access USB hardware directly\".\n\n"
-            f"2. Or run this once in a terminal (Copy command puts it on the clipboard):\n"
+            "Snap keeps USB receivers closed until you allow it once. Open a terminal "
+            "(Ctrl+Alt+T), paste this line, enter your password:\n\n"
             f"{cmd}\n\n"
-            "Then start observing. No restart is needed.")
-        b_open = box.addButton("Open permissions", QMessageBox.AcceptRole)
-        b_copy = box.addButton("Copy command", QMessageBox.ActionRole)
+            "Then press Start observing. No restart is needed, and the app will not "
+            "ask again.")
+        b_copy = box.addButton("Copy command", QMessageBox.AcceptRole)
         box.addButton("Later", QMessageBox.RejectRole)
         box.exec()
-        if box.clickedButton() is b_open:
-            name = os.environ.get("SNAP_NAME", "aquila-radio-astronomy")
-            QDesktopServices.openUrl(QUrl(f"snap://{name}"))
-        elif box.clickedButton() is b_copy:
+        if box.clickedButton() is b_copy:
             QGuiApplication.clipboard().setText(cmd)
-            self.sb.showMessage("Command copied", 8000)
+            self.sb.showMessage("Command copied, paste it into a terminal", 10000)
 
     def _observe_on_open(self):
         if self.proc is not None and self.proc.state() != QProcess.NotRunning:

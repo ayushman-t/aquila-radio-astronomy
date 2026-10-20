@@ -25,7 +25,7 @@ pip install ".[gui,hline]"
 aquila gui
 ```
 
-**Snap users, one extra step.** A snap starts with USB closed, so the first time the app opens it shows a dialog, "The app needs permission to open USB receivers". Press Open permissions and switch on USB access in the App Center, or run the line below once. That is all; the deb and the other packages never need it.
+**Snap users, one command before the first observation.** A snap starts with USB closed. The first time the app opens it shows the line below with a Copy button; paste it into a terminal once and press Start observing. The deb and the other packages never need it.
 
 ```
 sudo snap connect aquila-radio-astronomy:raw-usb
