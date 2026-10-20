@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aquila-radio-astronomy"
-version = "0.2.6"
+version = "0.2.7"
 description = "Narrowband SETI survey and hydrogen line with a dish and an SDR"
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}

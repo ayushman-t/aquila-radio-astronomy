@@ -1,14 +1,10 @@
-aquila-radio-astronomy (0.2.6) unstable; urgency=medium
+aquila-radio-astronomy (0.2.7) unstable; urgency=medium
 
-  * Licence: GPL-3.0-or-later (was MIT).
-  * Packaged builds (Windows, macOS): the hit curator runs again, and "open the
-    app at login" writes a command the packaged app accepts.
-  * The observer keeps going when the desktop app that started it is closed or
-    killed, instead of stopping with a traceback.
-  * Snap: a dialog explains the one-time USB permission, with a button to the
-    App Center permissions page.
-  * Connect to node: an address typed with Caps Lock on still works.
-  * About box names the source repository.
+  * Settings: bias tee switch (Quick setup pointed at it, it was missing).
+  * Snap: opens on X11 desktops (Qt's xcb libraries were not shipped); the
+    one-time USB permission dialog shows the command as a code box with a
+    Copy button and offers the .deb instead.
+  * README screenshots from the Windows build with a calibrated 2.4 m dish.
 
- -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Tue, 20 Oct 2026 03:40:00 +0530
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Wed, 21 Oct 2026 04:10:00 +0530
 
