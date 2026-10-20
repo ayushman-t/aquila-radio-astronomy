@@ -1041,8 +1041,8 @@ class Main(QMainWindow):
         """The snap cannot open a receiver until the user connects raw-usb. The
         sandbox does not let the app do it, and the App Center has no switch for
         it, so the one route is a command: show it, say why, offer the deb."""
-        from PySide6.QtGui import QDesktopServices, QGuiApplication
         from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices, QGuiApplication
         cmd = f"sudo snap connect {os.environ.get('SNAP_NAME', 'aquila-radio-astronomy')}:raw-usb"
         box = QMessageBox(self)
         box.setWindowTitle("Receiver access")
