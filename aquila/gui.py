@@ -1048,13 +1048,15 @@ class Main(QMainWindow):
         box.setWindowTitle("Receiver access")
         box.setIcon(QMessageBox.Information)
         box.setText("One command is needed before the first observation.")
+        box.setTextFormat(Qt.RichText)
         box.setInformativeText(
-            "A snap cannot open USB devices until you allow it once. Open a terminal "
-            "(Ctrl+Alt+T), paste this line and enter your password:\n\n"
-            f"{cmd}\n\n"
-            "Then press Start observing.\n\n"
-            "If you would rather not run it, install the .deb from GitHub instead. "
-            "It needs no permission.")
+            "<p>A snap cannot open USB devices until you allow it once. Open a terminal "
+            "(Ctrl+Alt+T), paste this line and enter your password:</p>"
+            "<pre style='background:#111; color:#eee; padding:10px; font-size:11pt'>"
+            f"{cmd}</pre>"
+            "<p>Then press Start observing.</p>"
+            "<p>If you would rather not run it, install the .deb from GitHub instead. "
+            "It needs no permission.</p>")
         b_copy = box.addButton("Copy command", QMessageBox.AcceptRole)
         b_deb = box.addButton("Get the .deb instead", QMessageBox.ActionRole)
         box.addButton("Later", QMessageBox.RejectRole)
