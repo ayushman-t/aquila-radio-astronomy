@@ -669,6 +669,11 @@ class Settings(QDialog):
         form.addRow(fnote)
         self.rate = QComboBox()
         form.addRow("Bandwidth (sample rate):", self.rate)
+        self.bias = QCheckBox("Bias tee: power the LNA through the coax")
+        self.bias.setChecked(bool(cfg["advanced"].get("bias_tee", True)))
+        self.bias.setToolTip("Off if the LNA has its own supply or there is no LNA. "
+                             "Takes effect when observing is next started.")
+        form.addRow("", self.bias)
         self.sdr.currentIndexChanged.connect(self._fill_rates)
         self._fill_rates()
         self.fft = QComboBox()
@@ -866,6 +871,7 @@ class Settings(QDialog):
         c["sample_rate"] = int(self.rate.currentData() or 0)
         c["advanced"]["n_chan"] = int(self.fft.currentData())
         c["advanced"]["api_token"] = self.token.text().strip()
+        c["advanced"]["bias_tee"] = self.bias.isChecked()
         c["dish"].update({"rotator": self.rot.text().strip(),
                           "az": self.az.value(), "el": self.el.value(),
                           "diameter_m": self.dia.value()})
@@ -948,7 +954,8 @@ class QuickSetup(QDialog):
         adv = cfg["advanced"]
         rest = QLabel(f"Sample rate: receiver default.   Channels: "
                       f"2^{int(adv['n_chan']).bit_length() - 1}.   Block: {adv['dwell_s']} s.   "
-                      "Bias tee: on.   Change these in Settings.")
+                      f"Bias tee: {'on' if adv.get('bias_tee', True) else 'off'}.   "
+                      "Change these in Settings.")
         rest.setWordWrap(True)
         rest.setStyleSheet("color: gray")
         outer.addWidget(rest)
