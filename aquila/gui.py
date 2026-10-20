@@ -1040,25 +1040,35 @@ class Main(QMainWindow):
     def snap_usb_dialog(self):
         """The snap cannot open a receiver until the user connects raw-usb. The
         sandbox does not let the app do it, and the App Center has no switch for
-        it, so the one route is a command: show it, with a copy button."""
-        from PySide6.QtGui import QGuiApplication
+        it, so the one route is a command: show it, say why, offer the deb."""
+        from PySide6.QtGui import QDesktopServices, QGuiApplication
+        from PySide6.QtCore import QUrl
         cmd = f"sudo snap connect {os.environ.get('SNAP_NAME', 'aquila-radio-astronomy')}:raw-usb"
         box = QMessageBox(self)
         box.setWindowTitle("Receiver access")
         box.setIcon(QMessageBox.Information)
-        box.setText("One command before the first observation.")
+        box.setText("One command is needed before the first observation.")
         box.setInformativeText(
-            "Snap keeps USB receivers closed until you allow it once. Open a terminal "
-            "(Ctrl+Alt+T), paste this line, enter your password:\n\n"
+            "This copy of the app is a snap, and a snap is not allowed to open USB "
+            "devices until you permit it. The app cannot ask for that permission "
+            "itself and the App Center has no switch for it, so it has to be typed "
+            "once. Open a terminal (Ctrl+Alt+T), paste this line and enter your "
+            "password:\n\n"
             f"{cmd}\n\n"
-            "Then press Start observing. No restart is needed, and the app will not "
-            "ask again.")
+            "Then press Start observing. No restart is needed and the app will not "
+            "ask again.\n\n"
+            "If you would rather not run it, the .deb package on GitHub installs "
+            "with a double click and needs no permission at all.")
         b_copy = box.addButton("Copy command", QMessageBox.AcceptRole)
+        b_deb = box.addButton("Get the .deb instead", QMessageBox.ActionRole)
         box.addButton("Later", QMessageBox.RejectRole)
         box.exec()
         if box.clickedButton() is b_copy:
             QGuiApplication.clipboard().setText(cmd)
             self.sb.showMessage("Command copied, paste it into a terminal", 10000)
+        elif box.clickedButton() is b_deb:
+            QDesktopServices.openUrl(
+                QUrl("https://github.com/ayushman-t/aquila-radio-astronomy/releases/latest"))
 
     def _observe_on_open(self):
         if self.proc is not None and self.proc.state() != QProcess.NotRunning:
