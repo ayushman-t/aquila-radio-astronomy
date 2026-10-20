@@ -44,7 +44,26 @@ parts:
     source: .
     python-packages: [".[gui,hline]"]
     build-packages: [python3-dev]
-    stage-packages: [airspy, rtl-sdr, hackrf, libusb-1.0-0, python3-venv]
+    stage-packages:
+      - airspy
+      - rtl-sdr
+      - hackrf
+      - libusb-1.0-0
+      - python3-venv
+      # Qt's xcb platform plugin links these; the gnome platform snap lacks xcb-cursor
+      - libxcb-cursor0
+      - libxcb-icccm4
+      - libxcb-image0
+      - libxcb-keysyms1
+      - libxcb-randr0
+      - libxcb-render-util0
+      - libxcb-shape0
+      - libxcb-shm0
+      - libxcb-sync1
+      - libxcb-util1
+      - libxcb-xfixes0
+      - libxcb-xkb1
+      - libxkbcommon-x11-0
     override-pull: |
       craftctl default
       craftctl set version="$(python3 -c 'import re;print(re.search(r"__version__ = \"(.+?)\"", open("aquila/__init__.py").read()).group(1))')"
