@@ -2231,9 +2231,14 @@ def flush_std():
 
 
 def main(cfg_path=None):
+    # the window must carry the name of its desktop entry or GNOME shows a generic
+    # icon: X11 matches StartupWMClass against argv[0] (always "aquila-gui"), Wayland
+    # matches the desktop file id, which a snap prefixes with its own name
+    sys.argv[0] = "aquila-gui"
     app = QApplication(sys.argv)
     app.setApplicationName("Aquila Radio Astronomy")
-    app.setDesktopFileName("aquila-radio-astronomy")
+    snap = os.environ.get("SNAP_NAME")
+    app.setDesktopFileName(f"{snap}_aquila-radio-astronomy" if snap else "aquila-radio-astronomy")
     from PySide6.QtGui import QIcon
     app.setWindowIcon(QIcon(ICON))
     try:

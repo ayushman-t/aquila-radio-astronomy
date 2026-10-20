@@ -1,12 +1,7 @@
-aquila-radio-astronomy (0.2.7) unstable; urgency=medium
+aquila-radio-astronomy (0.2.8) unstable; urgency=medium
 
-  * Snap: the receiver scan works inside the sandbox (sysfs is closed to it), so a
-    HydraSDR is no longer taken for an Airspy and started at a rate it lacks.
-  * Settings: bias tee switch (Quick setup pointed at it, it was missing).
-  * Snap: opens on X11 desktops (Qt's xcb libraries were not shipped); the
-    one-time USB permission dialog shows the command as a code box with a
-    Copy button and offers the .deb instead.
-  * README screenshots from the Windows build with a calibrated 2.4 m dish.
+  * Linux: the running window is matched to its launcher entry, so the dock and
+    the app grid show the app's own icon instead of a generic one (deb and snap).
 
- -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Wed, 21 Oct 2026 04:10:00 +0530
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Wed, 21 Oct 2026 05:20:00 +0530
 
