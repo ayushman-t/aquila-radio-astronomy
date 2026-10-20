@@ -31,6 +31,8 @@ aquila gui
 sudo snap connect aquila-radio-astronomy:raw-usb
 ```
 
+**Snap on Ubuntu, October 2026:** snapd 2.77.1 with the 6.14 kernel blocks every strict snap from reading its network sockets ([Launchpad bug 2169038](https://bugs.launchpad.net/snapd/+bug/2169038)), so the snap opens but cannot reach a remote node and the App Center shows grey icons for every app. Until Canonical ships the fix, `sudo snap revert snapd` puts the previous snapd back, or use the deb, which is not affected.
+
 A source install needs the vendor tool for your receiver on PATH: `airspy_rx`, `hydrasdr_rx`, `rtl_sdr` or `hackrf_transfer`. On Windows the receiver runs on the WinUSB driver: Airspy, HydraSDR and HackRF get it from Windows by themselves when first plugged in, an RTL-SDR needs it installed once with [Zadig](https://zadig.akeo.ie/); the app tells you when that is the problem.
 
 ## First run
