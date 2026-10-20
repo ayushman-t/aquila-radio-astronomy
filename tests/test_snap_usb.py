@@ -7,7 +7,9 @@ from aquila import gui
 
 def test_outside_a_snap_nothing_is_checked(monkeypatch):
     monkeypatch.delenv("SNAP_NAME", raising=False)
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ran")))
+    def never(*a, **k):
+        raise AssertionError("snapctl ran outside a snap")
+    monkeypatch.setattr(subprocess, "run", never)
     assert gui.snap_usb_blocked() is False
 
 

@@ -1040,8 +1040,8 @@ class Main(QMainWindow):
     def snap_usb_dialog(self):
         """The snap cannot open a receiver until the user connects raw-usb; the
         sandbox does not let the app do it for them, so point at the switch."""
-        from PySide6.QtGui import QDesktopServices, QGuiApplication
         from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices, QGuiApplication
         cmd = f"sudo snap connect {os.environ.get('SNAP_NAME', 'aquila-radio-astronomy')}:raw-usb"
         box = QMessageBox(self)
         box.setWindowTitle("Receiver access")
@@ -1057,7 +1057,8 @@ class Main(QMainWindow):
         box.addButton("Later", QMessageBox.RejectRole)
         box.exec()
         if box.clickedButton() is b_open:
-            QDesktopServices.openUrl(QUrl(f"snap://{os.environ.get('SNAP_NAME', 'aquila-radio-astronomy')}"))
+            name = os.environ.get("SNAP_NAME", "aquila-radio-astronomy")
+            QDesktopServices.openUrl(QUrl(f"snap://{name}"))
         elif box.clickedButton() is b_copy:
             QGuiApplication.clipboard().setText(cmd)
             self.sb.showMessage("Command copied", 8000)
