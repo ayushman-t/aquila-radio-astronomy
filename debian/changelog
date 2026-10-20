@@ -1,7 +1,8 @@
-aquila-radio-astronomy (0.2.8) unstable; urgency=medium
+aquila-radio-astronomy (0.2.9) unstable; urgency=medium
 
-  * Linux: the running window is matched to its launcher entry, so the dock and
-    the app grid show the app's own icon instead of a generic one (deb and snap).
+  * Linux: the window's class name now equals the launcher entry, which is
+    what GNOME matches on X11, so the dock and switcher show the app's icon.
+    0.2.8 changed the wrong half of the pair.
 
- -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Wed, 21 Oct 2026 05:20:00 +0530
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Wed, 21 Oct 2026 06:05:00 +0530
 

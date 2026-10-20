@@ -2236,7 +2236,7 @@ def main(cfg_path=None):
     # matches the desktop file id, which a snap prefixes with its own name
     sys.argv[0] = "aquila-gui"
     app = QApplication(sys.argv)
-    app.setApplicationName("Aquila Radio Astronomy")
+    app.setApplicationName("aquila-radio-astronomy")      # becomes the WM_CLASS class
     snap = os.environ.get("SNAP_NAME")
     app.setDesktopFileName(f"{snap}_aquila-radio-astronomy" if snap else "aquila-radio-astronomy")
     from PySide6.QtGui import QIcon

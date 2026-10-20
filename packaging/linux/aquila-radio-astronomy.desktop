@@ -8,4 +8,4 @@ Icon=aquila-radio-astronomy
 Terminal=false
 Categories=Science;Astronomy;HamRadio;
 Keywords=SDR;radio;astronomy;SETI;hydrogen;
-StartupWMClass=aquila-gui
+StartupWMClass=aquila-radio-astronomy
