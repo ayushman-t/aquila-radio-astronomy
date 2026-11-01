@@ -11,6 +11,7 @@ import json
 import math
 import os
 import re
+import socket
 import subprocess
 import sys
 import time
@@ -433,6 +434,16 @@ class Downloader(QThread):
         return got
 
 
+def _lan_ip():
+    """This computer's address on the local network (no packet is sent)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 9))
+            return s.getsockname()[0]
+    except OSError:
+        return "this-computer"
+
+
 def pixmap_from(data):
     if not data:
         return None
@@ -744,6 +755,17 @@ class Settings(QDialog):
                               "receiver calibration over the network. Takes effect when the "
                               "node is next started.")
         form.addRow("Control token:", self.token)
+        self.share = QCheckBox("Let other computers on this network see this node")
+        self.share.setChecked(cfg["advanced"].get("api_bind", "127.0.0.1") not in
+                              ("127.0.0.1", "localhost", "::1"))
+        form.addRow("Network:", self.share)
+        port = cfg["advanced"].get("api_port", 8090)
+        shnote = QLabel(f"On the other computer add http://{_lan_ip()}:{port} as a node. Takes "
+                        "effect the next time observing starts. Windows asks once whether to "
+                        "allow the app on the network: allow it on private networks.")
+        shnote.setWordWrap(True)
+        shnote.setStyleSheet("color: gray")
+        form.addRow(shnote)
         self.auto_login = QCheckBox("Open this app when I log in to the computer")
         self.auto_login.setChecked(autostart.enabled())
         self.auto_obs = QCheckBox("Start observing as soon as the app opens")
@@ -871,6 +893,7 @@ class Settings(QDialog):
         c["sample_rate"] = int(self.rate.currentData() or 0)
         c["advanced"]["n_chan"] = int(self.fft.currentData())
         c["advanced"]["api_token"] = self.token.text().strip()
+        c["advanced"]["api_bind"] = "0.0.0.0" if self.share.isChecked() else "127.0.0.1"
         c["advanced"]["bias_tee"] = self.bias.isChecked()
         c["dish"].update({"rotator": self.rot.text().strip(),
                           "az": self.az.value(), "el": self.el.value(),
