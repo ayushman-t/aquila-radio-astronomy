@@ -27,6 +27,13 @@ DEFAULTS = {
     "keep_scans": 500,
     "day_file": True,    # one 1024-channel row per block appended to h1/h1_<day>_<kHz>k.dat (4 KB)
     "day_keep_days": 30,
+    # frequency switching (H-line-only scans): the receiver alternates between two
+    # tunings a throw apart, so its own passband cancels channel by channel and no
+    # calibration is needed. throw 0 = twice the flat half of the band, so the
+    # reference tuning holds no line.
+    "freq_switch": True,
+    "fs_phase_s": 30,
+    "fs_throw_hz": 0,
 }
 
 
@@ -109,6 +116,9 @@ def observe(src, dat, obs, log=print, fine=0):
     return True
 
 
+CSV_HEAD = "local,file,peak_pct,peak_kms,calibrated,utc,peak_db,rms_db"
+
+
 def fine_twin(dat):
     return dat.replace(".dat", "_fine.dat")
 
@@ -122,15 +132,19 @@ def plot(dat, png, obs, h, cal_file=""):
                dB=True, n=int(h["n"]), m=m, slope_correction=bool(cal_file), plot_file=png)
 
 
-def peak_percent(dat, obs, h, cal_file=""):
-    """Line strength in percent above the baseline, and its velocity.
+def measure(dat, obs, h, cal_file=""):
+    """The line measured against its own baseline, or None.
 
     With a receiver cal the spectrum is divided by it first, which removes the
     passband, and a straight line is enough for what is left. Without a cal the
     raw passband is fitted with a cubic, which only works when the band holds
     baseline on BOTH sides of the line; at 2.4 or 3 Msps with the default centre
     it does not, and extrapolating across the passband peak invents lines, so
-    the function returns None ("no measurement") rather than a wrong number."""
+    the function returns None ("no measurement") rather than a wrong number.
+
+    Returns the dict of _result(): pct and db (line peak above the baseline, the
+    same number in percent and in dB), kms (its velocity), rms_db (channel noise),
+    and the arrays v and spec_db (the whole spectrum, for the plot)."""
     chans = int(obs["channels"])
     w = np.fromfile(dat, dtype=np.float32).reshape(-1, chans).mean(0)
     f = obs["frequency"] + (np.arange(chans) - chans / 2.0) * obs["bandwidth"] / chans
@@ -158,17 +172,142 @@ def peak_percent(dat, obs, h, cal_file=""):
     w = median_filter(w, size=5, mode="nearest")
     x = (f - obs["frequency"]) / obs["bandwidth"]
     base = np.polyval(np.polyfit(x[fit], w[fit], deg), x)
-    pct = 100.0 * (w / base - 1.0)
+    ratio = w / base
+    if np.any(ratio[edge] <= 0):
+        return None
+    pct = 100.0 * (ratio - 1.0)
     if not cal_file and np.abs(pct[fit]).max() > 1.0:
         return None           # the raw passband is not fitted well enough to trust a number
     i = np.argmax(np.where(line, pct, -1e9))
     if abs(v[i]) > 130.0:                         # at the window edge: baseline, not gas
         return None
-    return float(pct[i]), float(v[i])
+    return _result(ratio - 1.0, v, edge, fit, i)
 
 
-class _PlotsOff(Exception):
-    pass
+def _result(x, v, valid, fit, i):
+    """x: fractional power above the baseline per channel. Noise is the channel to
+    channel scatter on the line free channels (a smooth leftover shape is not noise)."""
+    from scipy.ndimage import uniform_filter1d
+    spec_db = np.where(valid, 10.0 * np.log10(np.clip(1.0 + x, 1e-6, None)), np.nan)
+    hp = x - uniform_filter1d(x, 15, mode="nearest")
+    rms = float(np.std(hp[fit])) if fit.sum() > 10 else float("nan")
+    return {"pct": float(100.0 * x[i]), "db": float(spec_db[i]), "kms": float(v[i]),
+            "rms_db": float(10.0 * np.log10(1.0 + rms)), "v": v, "spec_db": spec_db}
+
+
+FS_LINE_IF_HZ = -250e3      # where the line sits in the signal band: clear of the DC channel
+
+
+def fs_throw(rate, throw_hz=0):
+    """Frequency switching throw: twice the flat half of the band, so the reference
+    tuning sees none of the sky the signal band measures and holds no line."""
+    flat = min(0.344 * rate, 1.6e6)
+    return float(throw_hz) if throw_hz else 2.0 * flat
+
+
+def fs_tunings(h, rate):
+    """(signal, reference) centre frequencies in Hz."""
+    f_sig = h["f_rest_hz"] - FS_LINE_IF_HZ
+    return int(round(f_sig)), int(round(f_sig + fs_throw(rate, h.get("fs_throw_hz", 0))))
+
+
+def measure_fs(sig_dat, ref_dat, obs, h):
+    """Frequency switched spectrum, reduced the standard way.
+
+    S is taken with the line in the band, R with the receiver retuned by the throw,
+    so R sees only line free sky. In the same receiver channel both see the same
+    passband, spurs and DC offset, so S/R is the sky with the receiver shape gone,
+    and needs no calibration. What is left (the sky continuum differing between the
+    two tunings, gain drift between phases) is a straight line, fitted on the line
+    free channels and divided out, so the line is relative to the continuum under
+    it. The line free channels are found by growing the line window out from the
+    peak until the line meets the noise."""
+    from scipy.ndimage import median_filter, uniform_filter1d
+    chans = int(obs["channels"])
+    S = np.fromfile(sig_dat, dtype=np.float32).reshape(-1, chans).mean(0)
+    R = np.fromfile(ref_dat, dtype=np.float32).reshape(-1, chans).mean(0)
+    bw = float(obs["bandwidth"])
+    chw = bw / chans
+    xs = (S - R) / (R + 1e-30)
+    # receiver spurs sit in the same channel in both tunings and cancel; an outside
+    # carrier does not. Clip only channels that stand far off both neighbours: a
+    # running median would also shave the top off a narrow line.
+    med = median_filter(xs, size=3, mode="nearest")
+    d = xs - med
+    mad = np.median(np.abs(d - np.median(d))) * 1.4826 + 1e-12
+    wide = median_filter(xs, size=31, mode="nearest")
+    spike = (np.abs(d) > 6.0 * mad) & (np.abs(d) > 0.5 * np.abs(xs - wide))
+    xs = np.where(spike, med, xs)
+    off = np.arange(chans) - chans / 2.0
+    valid = np.abs(off * chw) < min(0.344 * bw, 1.6e6)
+    f = obs["frequency"] + off * chw
+    v = 299792.458 * (h["f_rest_hz"] - f) / h["f_rest_hz"]
+    x = off * chw / bw
+    line = valid & (np.abs(v) < 40.0)
+    lo = hi = 0
+    for _ in range(10):
+        fit = valid & ~line
+        if fit.sum() < 60:
+            return None
+        # divide, not subtract: the line is then relative to the continuum under it
+        res = (1.0 + xs) / (1.0 + np.polyval(np.polyfit(x[fit], xs[fit], 1), x)) - 1.0
+        sig = np.std((res - uniform_filter1d(res, 15, mode="nearest"))[fit])
+        sm = uniform_filter1d(res, 9, mode="nearest")
+        pk = int(np.argmax(np.where(valid & (np.abs(v) < 160.0), sm, -1e9)))
+        lo = hi = pk
+        # 2 sigma of a 9-channel mean; the floor (0.0004 dB) stops a noiseless
+        # scan's tiny continuum curvature from passing for line
+        thr = max(2.0 * sig / 3.0, 1e-4)
+        while lo > 0 and valid[lo - 1] and sm[lo - 1] > thr:
+            lo -= 1
+        while hi < chans - 1 and valid[hi + 1] and sm[hi + 1] > thr:
+            hi += 1
+        new = np.zeros(chans, bool)
+        new[max(lo - 8, 0):hi + 9] = True
+        new &= valid
+        if (new == line).all():
+            break
+        line = new
+    fit = valid & ~line
+    ipk = int(np.argmax(np.where(line, res, -1e9)))
+    if not line[ipk] or abs(v[ipk]) > 160.0:
+        return None
+    m = _result(res, v, valid, fit, ipk)
+    m["line_kms"] = (float(v[min(hi + 8, chans - 1)]), float(v[max(lo - 8, 0)]))
+    m["baseline_ch"] = int(fit.sum())
+    return m
+
+
+def peak_percent(dat, obs, h, cal_file=""):
+    """(peak percent, velocity) or None; see measure()."""
+    m = measure(dat, obs, h, cal_file)
+    return None if m is None else (m["pct"], m["kms"])
+
+
+def plot_db(m, png, title=""):
+    """The calibrated spectrum in dB above its baseline, against velocity."""
+    _patch_matplotlib()
+    import matplotlib.pyplot as plt
+    ok = ~np.isnan(m["spec_db"])
+    v, s = m["v"][ok], m["spec_db"][ok]
+    fig, ax = plt.subplots(figsize=(10, 5.2), dpi=100)
+    ax.axhspan(-m["rms_db"], m["rms_db"], color="0.85", lw=0, label="baseline noise (1 rms)")
+    ax.axhline(0.0, color="0.45", lw=0.8)
+    ax.plot(v, s, color="#1f5fa8", lw=1.2, label="calibrated spectrum")
+    ax.plot([m["kms"]], [m["db"]], "o", color="#c0392b", ms=6,
+            label=f"peak {m['db']:.3f} dB at {m['kms']:.0f} km/s")
+    ax.set_xlim(v.max(), v.min())            # approaching gas on the right, as frequency rises
+    ax.set_xlabel("Velocity (km/s, positive = receding)")
+    ax.set_ylabel("Power above baseline (dB)")
+    note = f"noise {m['rms_db']:.4f} dB rms per channel"
+    if m.get("method"):
+        note = m["method"] + "    " + note
+    ax.set_title((title + "\n" if title else "") + note, fontsize=10)
+    ax.grid(alpha=0.3)
+    ax.legend(loc="upper left", fontsize=9, frameon=False)
+    fig.tight_layout()
+    fig.savefig(png)
+    plt.close(fig)
 
 
 class HLine:
@@ -286,6 +425,8 @@ class HLine:
 
     def scan(self):
         self.cfg.update(config.pointing(self.cfg))
+        if self.h.get("freq_switch", True):
+            return self.fs_scan()
         obs = obs_parameters(self.cfg, self.src, self.h)
         self.status("capturing", scans=self.n_scans)
         stamp = time.strftime("%Y%m%d_%H%M%S")
@@ -293,6 +434,57 @@ class HLine:
         if not observe(self.src, dat, obs, self.log):
             return False
         return self.record(dat, obs, stamp)
+
+    def fs_scan(self):
+        """One frequency switched scan: signal (the line in the band) and reference
+        (retuned by the throw, no line) in alternating phases of fs_phase_s, so slow
+        gain drift hits both equally. Written as obs_<stamp>.dat (signal) and
+        obs_<stamp>_ref.dat, each a normal virgo scan of its own tuning."""
+        src, h = self.src, self.h
+        home = src.center_hz
+        f_sig, f_ref = fs_tunings(h, src.rate)
+        throw = f_ref - f_sig
+        phase = max(5, int(h.get("fs_phase_s", 30)))
+        pairs = max(1, int(round(h["duration_s"] / (2.0 * phase))))
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        dat = os.path.join(self.dir, f"obs_{stamp}.dat")
+        ref = dat.replace(".dat", "_ref.dat")
+        tmp = dat.replace(".dat", "_phase.dat")
+        acc = {f_sig: [], f_ref: []}
+        self.status("capturing", scans=self.n_scans)
+        mjd0 = time.time() / 86400.0 + 40587.0
+        try:
+            for _ in range(pairs):
+                for fc in (f_sig, f_ref):
+                    if not self.running:
+                        return False
+                    src.center_hz = fc
+                    obs = obs_parameters(self.cfg, src, h, duration=phase)
+                    if not observe(src, tmp, obs, self.log):
+                        return False
+                    acc[fc].append(np.fromfile(tmp, dtype=np.float32).reshape(
+                        -1, int(obs["channels"])))
+        finally:
+            src.center_hz = home
+            for p in (tmp, tmp.replace(".dat", ".header")):
+                with contextlib.suppress(OSError):
+                    os.remove(p)
+        for fc, path in ((f_sig, dat), (f_ref, ref)):
+            src.center_hz = fc
+            obs = obs_parameters(self.cfg, src, h, duration=phase * pairs)
+            obs["fs_throw_hz"] = f"{throw:.0f}"
+            obs["fs_ref"] = os.path.basename(ref)
+            np.concatenate(acc[fc]).astype(np.float32).tofile(path + ".tmp")
+            replace(path + ".tmp", path)
+            with open(path.replace(".dat", ".header"), "w") as fh:
+                fh.write(f"mjd={mjd0:.8f}\n")
+                for k2, v2 in obs.items():
+                    fh.write(f"{k2}={v2}\n")
+        src.center_hz = f_sig
+        obs = obs_parameters(self.cfg, src, h, duration=phase * pairs)
+        src.center_hz = home
+        obs["fs_throw_hz"] = throw
+        return self.record(dat, obs, stamp, ref=ref)
 
     def record_block(self, wf_raw, row_s):
         """H-line product from a SETI block: the raw waterfall binned to 1024 channels,
@@ -350,38 +542,23 @@ class HLine:
         except Exception as e:
             self.log(f"h1 day file skipped: {e}")
 
-    def record(self, dat, obs, stamp, block=False):
+    def record(self, dat, obs, stamp, block=False, ref=None):
         save = self.cfg.get("save") or {}
         cal = self.cal_for(block)
         raw_png = dat.replace(".dat", "_raw.png")
         cal_png = dat.replace(".dat", ".png")
-        try:
-            if not save.get("plots", True) or getattr(self, "_no_virgo", False):
-                raise _PlotsOff
-            plot(dat, raw_png, obs, self.h)
-            _copy(raw_png, os.path.join(self.dir, "latest_raw.png"))
-            usable, why = self.cal_usable(obs)
-            if usable:
-                plot(dat, cal_png, obs, self.h, cal_file=cal)
-                _copy(cal_png, os.path.join(self.dir, "latest.png"))
-            elif os.path.exists(self.cal):
-                if why != getattr(self, "_cal_warned", None):
-                    self.log("calibrated plot skipped: " + why)
-                    self._cal_warned = why
-                with contextlib.suppress(OSError):
-                    os.remove(os.path.join(self.dir, "latest.png"))
-        except _PlotsOff:
-            pass
-        except ImportError:
-            self._no_virgo = True
-            self.log("hydrogen line plots off: virgo is not installed "
-                     "(pip install 'aquila-radio-astronomy[hline]')")
-        except Exception as e:
-            self.log(f"virgo plot failed: {e}")
+        plots = save.get("plots", True)
+        usable_cal, why = (True, "") if ref else self.cal_usable(obs)
         meas = None
-        usable_cal = self.cal_usable(obs)[0]
         try:
-            meas = peak_percent(dat, obs, self.h, cal if usable_cal else "")
+            if ref:
+                meas = measure_fs(dat, ref, obs, self.h)
+                if meas is not None:
+                    meas["method"] = "frequency switched"
+            else:
+                meas = measure(dat, obs, self.h, cal if usable_cal else "")
+                if meas is not None:
+                    meas["method"] = "calibrated" if usable_cal else "raw"
             if meas is None and not usable_cal and not getattr(self, "_meas_warned", False):
                 self._meas_warned = True
                 self.log("line strength not measured: without a calibration the raw passband "
@@ -389,43 +566,75 @@ class HLine:
                          "(50 ohm terminator or cold sky) and every scan gets a number.")
         except Exception as e:
             self.log(f"measure failed: {e}")
+        if plots and not getattr(self, "_no_virgo", False):
+            try:
+                plot(dat, raw_png, obs, self.h)
+                _copy(raw_png, os.path.join(self.dir, "latest_raw.png"))
+            except ImportError:
+                self._no_virgo = True
+                self.log("raw hydrogen line plots off: virgo is not installed "
+                         "(pip install 'aquila-radio-astronomy[hline]')")
+            except Exception as e:
+                self.log(f"virgo plot failed: {e}")
+        if plots:
+            try:
+                if usable_cal and meas is not None:
+                    plot_db(meas, cal_png, f"{self.cfg.get('name') or 'node'}   scan {stamp}")
+                    _copy(cal_png, os.path.join(self.dir, "latest.png"))
+                elif os.path.exists(self.cal) or ref:
+                    if not usable_cal and why != getattr(self, "_cal_warned", None):
+                        self.log("calibrated plot skipped: " + why)
+                        self._cal_warned = why
+                    with contextlib.suppress(OSError):
+                        os.remove(os.path.join(self.dir, "latest.png"))
+            except Exception as e:
+                self.log(f"calibrated plot failed: {e}")
         if not save.get("spectra", True):
-            for f in (dat, dat.replace(".dat", ".header")):
+            for f in (dat, dat.replace(".dat", ".header")) + (
+                    (ref, ref.replace(".dat", ".header")) if ref else ()):
                 with contextlib.suppress(OSError):
                     os.remove(f)
         if save.get("csv", True):
             new = not os.path.exists(self.csv)
             if not new:
                 self._upgrade_csv_header()
+
+            def num(k, fmt):
+                return "" if meas is None or meas.get(k) is None else fmt.format(meas[k])
             with open(self.csv, "a", newline="") as f:
                 w = csv.writer(f)
                 if new:
-                    w.writerow(["local", "file", "peak_pct", "peak_kms", "calibrated", "utc"])
+                    w.writerow(CSV_HEAD.split(","))
                 w.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), os.path.basename(dat),
-                            "" if meas is None else f"{meas[0]:.2f}",
-                            "" if meas is None else f"{meas[1]:.1f}",
-                            int(self.cal_usable(obs)[0]),
-                            time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())])
+                            num("pct", "{:.2f}"), num("kms", "{:.1f}"), int(usable_cal),
+                            time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()),
+                            num("db", "{:.3f}"), num("rms_db", "{:.4f}")])
         if meas is None:
             self.log(f"scan {stamp}: no line measurement")
+        elif usable_cal:
+            self.log(f"scan {stamp}: {meas['method']} peak {meas['db']:.3f} dB "
+                     f"({meas['pct']:.2f}%) at {meas['kms']:.0f} km/s, "
+                     f"noise {meas['rms_db']:.4f} dB rms")
         else:
-            how = "calibrated" if usable_cal else "raw"
-            self.log(f"scan {stamp}: {how} peak {meas[0]:.2f}% at {meas[1]:.0f} km/s")
+            self.log(f"scan {stamp}: raw peak {meas['pct']:.2f}% at {meas['kms']:.0f} km/s")
         if self.own_status:
-            self.status("idle", scans=self.n_scans, last_peak_pct=None if meas is None else meas[0])
+            self.status("idle", scans=self.n_scans,
+                        last_peak_pct=None if meas is None else meas["pct"],
+                        last_peak_db=None if meas is None or not usable_cal else meas["db"])
         self.trim()
         return True
 
     def _upgrade_csv_header(self):
-        """A scans.csv from before the utc column: rewrite its header line once."""
+        """A scans.csv from an older version: rewrite its header line once. Old rows
+        keep their fewer columns; readers treat missing ones as blank."""
         try:
             with open(self.csv, "r+", newline="") as f:
                 head = f.readline()
-                if "utc" in head:
+                if head.strip() == CSV_HEAD:
                     return
                 rest = f.read()
                 f.seek(0)
-                f.write("local,file,peak_pct,peak_kms,calibrated,utc\n" + rest)
+                f.write(CSV_HEAD + "\n" + rest)
                 f.truncate()
         except OSError:
             pass
@@ -440,10 +649,12 @@ class HLine:
                 replace(self.csv + ".tmp", self.csv)
         except OSError:
             pass
-        for pat in ("obs_*.dat", "obs_*.header", "obs_*.png", "obs_*_raw.png"):
+        for pat in ("obs_*.dat", "obs_*.header", "obs_*.png", "obs_*_raw.png",
+                    "obs_*_ref.dat", "obs_*_ref.header"):
             files = sorted(glob.glob(os.path.join(self.dir, pat)))
-            if pat == "obs_*.png":                 # the raw twins are counted on their own
-                files = [f for f in files if not f.endswith("_raw.png")]
+            if "_" not in pat[4:]:                 # twins (_raw, _ref) are counted on their own
+                files = [f for f in files if not f.endswith(("_raw.png", "_ref.dat",
+                                                             "_ref.header"))]
             for f in files[:max(0, len(files) - keep)]:
                 with contextlib.suppress(OSError):
                     os.remove(f)

@@ -384,7 +384,9 @@ class Downloader(QThread):
     def _hline(self):
         f = self.key
         got = [x for x in (self._save(f"hline/{f}_raw.png"), self._save(f"hline/{f}.png"),
-                           self._save(f"hline/{f}.dat"), self._save(f"hline/{f}.header")) if x]
+                           self._save(f"hline/{f}.dat"), self._save(f"hline/{f}.header"),
+                           self._save(f"hline/{f}_ref.dat"), self._save(f"hline/{f}_ref.header"))
+               if x]
         dat, hdr = f"{f}.dat", f"{f}.header"
         if dat in got and hdr in got:
             obs = {}
@@ -1706,7 +1708,7 @@ class Main(QMainWindow):
             self._sky_top = True
             self.hl_top.addWidget(self.gb_sky, 1)
         if cal:
-            self.lb_raw.setText("Calibrated (virgo, receiver reference)" + suffix)
+            self.lb_raw.setText("Calibrated, power above baseline in dB" + suffix)
         else:
             self.lb_raw.setText("Uncalibrated (virgo, raw)" + suffix
                                 + "   (no receiver calibration yet)")
@@ -1714,9 +1716,10 @@ class Main(QMainWindow):
             self._hl_rows = rows
             self._fill_scan_table(
                 self.hl_table, self.hl_model,
-                ["Time", "Scan", "Line peak (%)", "Velocity (km/s)", "Calibrated"],
-                [(r + [""] * 5)[:4] + ["yes" if (len(r) > 4 and r[4] == "1") else "no"]
-                 for r in rows[::-1] if len(r) > 1])
+                ["Time", "Scan", "Line peak (dB)", "Line peak (%)", "Velocity (km/s)",
+                 "Noise (dB rms)", "Calibrated"],
+                [[q[0], q[1], q[6], q[2], q[3], q[7], "yes" if q[4] == "1" else "no"]
+                 for q in ((r + [""] * 9)[:9] for r in rows[::-1] if len(r) > 1)])
 
     @staticmethod
     def _hdr_dict(b):
