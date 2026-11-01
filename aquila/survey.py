@@ -8,6 +8,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 import numpy as np
@@ -61,8 +62,14 @@ class Survey:
                                  token=self.adv.get("api_token", ""))
             self.api_addr = f"{self.adv['api_bind']}:{self.adv['api_port']}"
         except OSError as e:
-            self.store.log(f"api not started: {e}")
+            # a Tailscale or Wi-Fi address may not exist yet at boot: keep trying
+            if getattr(self, "api_addr", "") != "not started":
+                self.store.log(f"api not started, retrying every 30 s: {e}")
             self.api_addr = "not started"
+            if self.running:
+                t = threading.Timer(30.0, self.start_api)
+                t.daemon = True
+                t.start()
 
     def stop(self, *_):
         self.running = False
