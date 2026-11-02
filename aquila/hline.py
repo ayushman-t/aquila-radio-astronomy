@@ -22,8 +22,13 @@ DEFAULTS = {
     "channels": 1024,
     "t_sample": 1.0,
     "f_rest_hz": 1420405751.768,
-    "n": 20,           # virgo median filter (frequency)
-    "m": 35,           # virgo median filter (time)
+    # median filters, set in Settings. n (channels, 0 = about 5 km/s at any rate)
+    # smooths the dB spectrum and its peak: it removes the channel noise that would
+    # otherwise lift the peak, wider starts to flatten the line top. m (samples)
+    # smooths virgo's power-against-time panel; across the spectrum it only adds
+    # noise (measured +50%), so it stays there.
+    "n": 0,
+    "m": 35,
     "keep_scans": 500,
     "day_file": True,    # one 1024-channel row per block appended to h1/h1_<day>_<kHz>k.dat (4 KB)
     "day_keep_days": 30,
@@ -122,6 +127,15 @@ def observe(src, dat, obs, log=print, fine=0):
 CSV_HEAD = "local,file,peak_pct,peak_kms,calibrated,utc,peak_db,rms_db"
 
 
+def median_channels(h, obs):
+    """The frequency median filter width in channels: n as set, or about 5 km/s."""
+    n = int(h.get("n") or 0)
+    if n > 0:
+        return n
+    kms = float(obs["bandwidth"]) / int(obs["channels"]) * 299792.458 / h["f_rest_hz"]
+    return max(1, int(round(5.0 / kms)))
+
+
 def fine_twin(dat):
     return dat.replace(".dat", "_fine.dat")
 
@@ -132,7 +146,7 @@ def plot(dat, png, obs, h, cal_file=""):
     rows = int(round(obs["duration"] / obs["t_sample"]))
     m = min(int(h["m"]), max(3, rows - 1))
     virgo.plot(obs_parameters=obs, obs_file=dat, cal_file=cal_file, f_rest=h["f_rest_hz"],
-               dB=True, n=int(h["n"]), m=m, slope_correction=bool(cal_file), plot_file=png)
+               dB=True, n=median_channels(h, obs), m=m, slope_correction=bool(cal_file), plot_file=png)
 
 
 def measure(dat, obs, h, cal_file=""):
@@ -169,10 +183,10 @@ def measure(dat, obs, h, cal_file=""):
         if min(below, above) < 30:
             return None
         deg = 3
-    # the line is ~20 channels wide; a spur is 1 or 2. A 5-channel running median
-    # removes spurs and the DC spike before the fit and the peak search.
+    # the line is ~20 channels wide; a spur is 1 or 2. A running median (n channels,
+    # at least 5) removes spurs and the DC spike before the fit and the peak search.
     from scipy.ndimage import median_filter
-    w = median_filter(w, size=5, mode="nearest")
+    w = median_filter(w, size=max(5, median_channels(h, obs)), mode="nearest")
     x = (f - obs["frequency"]) / obs["bandwidth"]
     base = np.polyval(np.polyfit(x[fit], w[fit], deg), x)
     ratio = w / base
@@ -184,15 +198,19 @@ def measure(dat, obs, h, cal_file=""):
     i = np.argmax(np.where(line, pct, -1e9))
     if abs(v[i]) > 130.0:                         # at the window edge: baseline, not gas
         return None
-    return _result(ratio - 1.0, v, edge, fit, i)
+    m = _result(ratio - 1.0, v, edge, fit, i)
+    m["n"] = max(5, median_channels(h, obs))
+    return m
 
 
-def _result(x, v, valid, fit, i):
+def _result(x, v, valid, fit, i, unsmoothed=None):
     """x: fractional power above the baseline per channel. Noise is the channel to
-    channel scatter on the line free channels (a smooth leftover shape is not noise)."""
+    channel scatter on the line free channels (a smooth leftover shape is not noise),
+    taken before any median filter when that is given."""
     from scipy.ndimage import uniform_filter1d
     spec_db = np.where(valid, 10.0 * np.log10(np.clip(1.0 + x, 1e-6, None)), np.nan)
-    hp = x - uniform_filter1d(x, 15, mode="nearest")
+    u = x if unsmoothed is None else unsmoothed
+    hp = u - uniform_filter1d(u, 15, mode="nearest")
     rms = float(np.std(hp[fit])) if fit.sum() > 10 else float("nan")
     return {"pct": float(100.0 * x[i]), "db": float(spec_db[i]), "kms": float(v[i]),
             "rms_db": float(10.0 * np.log10(1.0 + rms)), "v": v, "spec_db": spec_db}
@@ -292,10 +310,13 @@ def measure_fs(sig_dat, ref_dat, obs, h):
         return None
     # divide, not subtract: the line is then relative to the continuum under it
     res = (1.0 + xs) / (1.0 + np.polyval(np.polyfit(x[fit], xs[fit], 1), x)) - 1.0
-    ipk = int(np.argmax(np.where(line, res, -1e9)))
+    n = median_channels(h, obs)
+    sm = median_filter(res, size=n, mode="nearest") if n > 1 else res
+    ipk = int(np.argmax(np.where(line, sm, -1e9)))
     if not line[ipk]:
         return None
-    m = _result(res, v, valid, fit, ipk)
+    m = _result(sm, v, valid, fit, ipk, unsmoothed=res)
+    m["n"] = n
     m["line_kms"] = (win, -win)
     m["baseline_ch"] = int(fit.sum())
     return m
@@ -323,6 +344,8 @@ def plot_db(m, png, title=""):
     ax.set_xlabel("Velocity (km/s, positive = receding)")
     ax.set_ylabel("Power above baseline (dB)")
     note = f"noise {m['rms_db']:.4f} dB rms per channel"
+    if m.get("n", 0) > 1:
+        note += f"    median filter {m['n']} channels"
     if m.get("method"):
         note = m["method"] + "    " + note
     ax.set_title((title + "\n" if title else "") + note, fontsize=10)
@@ -705,7 +728,7 @@ class HLine:
         cal = "yes" if os.path.exists(self.cal) else "no"
         self.log(f"=== h-line: {self.src.name} at {self.src.center_hz / 1e6:.4f} MHz, "
                  f"{self.h['duration_s']} s scans, cal {cal}")
-        while self.running and (not blocks or n < blocks) and fails < 5:
+        while self.running and (not blocks or n < blocks) and not (blocks and fails >= 5):
             if self.cal_requested():
                 self.status("calibrating", scans=self.n_scans, cal_s=int(self.h["duration_s"]))
                 try:
@@ -726,8 +749,15 @@ class HLine:
                 n += 1
                 self.n_scans += 1
                 fails = 0
-            else:
+            elif self.running:
+                # keep trying, as the survey does: a radio still held by an old capture or
+                # a USB glitch must not end observing. After 20 failures status.json is
+                # left stale on purpose, so a site watchdog can power-cycle the hub.
                 fails += 1
+                if fails < 20:
+                    self.status("retry", scans=self.n_scans)
+                elif fails == 20:
+                    self.log("20 capture failures in a row: status.json left stale for the watchdog")
                 time.sleep(5)
         self.status("stopped", scans=self.n_scans)
         release_lock(self.lock)

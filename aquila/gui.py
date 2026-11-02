@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
+    QSpinBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -787,6 +788,28 @@ class Settings(QDialog):
         snote.setWordWrap(True)
         snote.setStyleSheet("color: gray")
         form.addRow(snote)
+        hl = cfg.get("hline") or {}
+        self.med_n = QSpinBox()
+        self.med_n.setRange(0, 201)
+        self.med_n.setSpecialValueText("Auto (about 5 km/s)")
+        self.med_n.setSuffix(" channels")
+        self.med_n.setValue(int(hl.get("n") or 0))
+        self.med_n.setToolTip("Smooths the hydrogen line spectrum in dB and the peak read "
+                              "from it. Wider hides more noise but flattens a narrow line.")
+        self.med_m = QSpinBox()
+        self.med_m.setRange(0, 999)
+        self.med_m.setSpecialValueText("Off")
+        self.med_m.setSuffix(" samples")
+        self.med_m.setValue(int(hl.get("m", 35)))
+        self.med_m.setToolTip("Smooths the power against time panel of the uncalibrated plot.")
+        row = QHBoxLayout()
+        row.addWidget(QLabel("frequency n"))
+        row.addWidget(self.med_n)
+        row.addSpacing(12)
+        row.addWidget(QLabel("time m"))
+        row.addWidget(self.med_m)
+        row.addStretch(1)
+        form.addRow("Median filter:", row)
         sv = cfg.get("save") or {}
         self.s_csv = QCheckBox("Hit and scan tables (CSV)")
         self.s_csv.setChecked(sv.get("csv", True))
@@ -892,6 +915,7 @@ class Settings(QDialog):
                      "spectra": self.s_spectra.isChecked(), "raw_iq": self.s_raw.isChecked()}
         c["app"] = dict(c.get("app") or {}, observe_on_open=self.auto_obs.isChecked(),
                         narrowband=self.narrow.isChecked())
+        c["hline"] = dict(c.get("hline") or {}, n=self.med_n.value(), m=self.med_m.value())
         c["_autostart"] = self.auto_login.isChecked()
         c["center_mhz"] = self.freq.value()
         c["sample_rate"] = int(self.rate.currentData() or 0)
@@ -1302,10 +1326,9 @@ class Main(QMainWindow):
         topv.setContentsMargins(0, 0, 0, 0)
         self.hl_banner, self.hl_live, row = self._banner(lambda: self.view_scan(None))
         topv.addLayout(row)
-        # one plot at a time: the calibrated plot already contains everything the raw
-        # plot shows. The calibrate button sits above whichever plot is visible.
+        # both plots side by side (calibrated in dB, virgo's raw), the sky map narrower
         hdr = QHBoxLayout()
-        self.lb_raw = QLabel("Uncalibrated (virgo, raw)")
+        self.lb_raw = QLabel("")
         self.lb_raw.setStyleSheet("font-weight: bold")
         hdr.addWidget(self.lb_raw)
         self.b_cal = QPushButton("Calibrate now")
@@ -1331,16 +1354,16 @@ class Main(QMainWindow):
         topv.addLayout(top, 1)
         self.hl_cal = ImagePane("No calibrated plot yet. Take a receiver calibration first.")
         self.hl_raw = ImagePane("No scan yet.")
-        self.gb_cal = QGroupBox()
+        self.gb_cal = QGroupBox("Calibrated, power above baseline (dB)")
         lay_c = QVBoxLayout(self.gb_cal)
         lay_c.setContentsMargins(2, 2, 2, 2)
         lay_c.addWidget(self.hl_cal)
-        top.addWidget(self.gb_cal, 1)
-        self.gb_raw = QGroupBox()
+        top.addWidget(self.gb_cal, 3)
+        self.gb_raw = QGroupBox("Uncalibrated (virgo, raw)")
         lay_r = QVBoxLayout(self.gb_raw)
         lay_r.setContentsMargins(2, 2, 2, 2)
         lay_r.addWidget(self.hl_raw, 1)
-        top.addWidget(self.gb_raw, 1)
+        top.addWidget(self.gb_raw, 3)
         w.addWidget(topw)
         botw = QWidget()
         bottom = QHBoxLayout(botw)
@@ -1710,26 +1733,23 @@ class Main(QMainWindow):
             when = scan_time(sel)
         self.hl_cal.set_data(cal)
         self.hl_raw.set_data(raw)
-        suffix = f"   scan {when}" if when else ""
         if sel and "sel_raw" in d:
             self._set_live(self.hl_banner, self.hl_live, False,
                            f"scan {when}{self._hdr_summary(d.get('sel_hdr'))}")
         else:
             self._set_live(self.hl_banner, self.hl_live, True,
                            f"latest scan {when}" if when else "")
-        self.gb_cal.setVisible(bool(cal))
-        self.gb_raw.setVisible(not cal)
-        # the sky map always sits beside the plot; the scan list has the full width below
+        self.gb_cal.setVisible(bool(cal) or not raw)
+        self.gb_raw.setVisible(bool(raw) or not cal)
+        # the sky map sits beside the plots, narrower; the scan list has the full width below
         if not getattr(self, "_sky_top", False):
             self._sky_top = True
-            self.hl_top.addWidget(self.gb_sky, 1)
-        if cal:
-            self.lb_raw.setText("Calibrated, power above baseline in dB" + suffix)
-        elif getattr(self, "_cal_mode", "") == "frequency switching":
-            self.lb_raw.setText("Uncalibrated (virgo, raw)" + suffix)
+            self.hl_top.addWidget(self.gb_sky, 2)
+        if cal or getattr(self, "_cal_mode", "") == "frequency switching":
+            self.lb_raw.setText(f"Scan {when}" if when else "")
         else:
-            self.lb_raw.setText("Uncalibrated (virgo, raw)" + suffix
-                                + "   (no receiver calibration yet)")
+            self.lb_raw.setText((f"Scan {when}   " if when else "")
+                                + "(no receiver calibration yet)")
         if head and rows != getattr(self, "_hl_rows", None):
             self._hl_rows = rows
             self._fill_scan_table(
