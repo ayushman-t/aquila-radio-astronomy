@@ -70,7 +70,7 @@ def test_fs_scan_end_to_end(tmp_path, monkeypatch):
     from aquila.sdr import Synthetic
     cfg = cfgmod.load(str(tmp_path / "c.json"))
     cfg.update(sdr="synthetic", sample_rate=2_400_000, state_dir=str(tmp_path / "s"))
-    cfg["hline"] = {"duration_s": 40, "fs_phase_s": 10}
+    cfg["hline"] = {"duration_s": 40, "fs_phase_s": 10, "freq_switch": True}
     cfg["save"]["plots"] = False
     src = Synthetic(cfg)
     src.rate = 2_400_000

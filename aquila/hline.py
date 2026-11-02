@@ -30,8 +30,9 @@ DEFAULTS = {
     # frequency switching (H-line-only scans): the receiver alternates between two
     # tunings a throw apart, so its own passband cancels channel by channel and no
     # calibration is needed. throw 0 = twice the flat half of the band, so the
-    # reference tuning holds no line.
-    "freq_switch": True,
+    # reference tuning holds no line. Off: on the 0.9 m HydraSDR the band shape moved
+    # 0.2 to 0.3 dB between tunings 3 to 6 MHz apart, more than the line.
+    "freq_switch": False,
     "fs_phase_s": 30,
     "fs_throw_hz": 0,
 }
