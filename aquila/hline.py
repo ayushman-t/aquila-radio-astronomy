@@ -35,6 +35,7 @@ DEFAULTS = {
     "freq_switch": False,
     "fs_phase_s": 30,
     "fs_throw_hz": 0,
+    "line_window_kms": 120,   # frequency switched: baseline fitted outside +-this
 }
 
 
@@ -213,14 +214,15 @@ def fs_tunings(h, rate):
 
 
 def _flat_band(R, off_hz, bw):
-    """Channels in the flat part of the passband, read from the reference itself: out
-    from the centre while the smoothed band stays within 0.5 dB of its middle. Beyond
-    the filter shoulders the image leaks in and differs between the two tunings."""
+    """Channels inside the passband, read from the reference itself: out from the
+    centre until the smoothed band falls 1 dB below its middle (the filter shoulder;
+    beyond it the image leaks in and differs between the two tunings). Ripple and
+    bumps inside the band are fine: they cancel."""
     from scipy.ndimage import median_filter
     lim = min(0.344 * bw, 1.6e6)
     r = median_filter(R, size=15, mode="nearest")
     mid = np.median(r[np.abs(off_hz) < 0.25 * lim])
-    ok = np.abs(10.0 * np.log10(np.clip(r, 1e-30, None) / mid)) < 0.5
+    ok = 10.0 * np.log10(np.clip(r, 1e-30, None) / mid) > -1.0
     c = len(R) // 2
     lo = hi = c
     while lo > 0 and ok[lo - 1] and abs(off_hz[lo - 1]) < lim:
@@ -240,10 +242,9 @@ def measure_fs(sig_dat, ref_dat, obs, h):
     passband, spurs and DC offset, so S/R is the sky with the receiver shape gone,
     and needs no calibration. What is left (the sky continuum differing between the
     two tunings, gain drift between phases) is a straight line, fitted on the line
-    free channels and divided out, so the line is relative to the continuum under
-    it. The line free channels are found by growing the line window out from the
-    peak until the line meets the noise."""
-    from scipy.ndimage import median_filter, uniform_filter1d
+    free channels (outside a fixed line window) and divided out, so the line is
+    relative to the continuum under it."""
+    from scipy.ndimage import median_filter
     chans = int(obs["channels"])
     S = np.fromfile(sig_dat, dtype=np.float32).reshape(-1, chans).mean(0)
     R = np.fromfile(ref_dat, dtype=np.float32).reshape(-1, chans).mean(0)
@@ -262,41 +263,28 @@ def measure_fs(sig_dat, ref_dat, obs, h):
     wide = median_filter(xs, size=31, mode="nearest")
     spike = (np.abs(d) > 6.0 * mad) & (np.abs(d) > 0.5 * np.abs(xs - wide))
     spike = np.convolve(spike, np.ones(5), mode="same") > 0
-    xs = np.where(spike, wide, xs)
     f = obs["frequency"] + off * chw
     v = 299792.458 * (h["f_rest_hz"] - f) / h["f_rest_hz"]
+    win = float(h.get("line_window_kms", 120.0))
+    if chw > 6e3:
+        # channels so wide (above ~6 Msps) that a narrow line is a few channels too:
+        # inside the line window a spur can no longer be told from gas
+        spike &= np.abs(v) >= win
+    xs = np.where(spike, wide, xs)
     x = off * chw / bw
-    line = valid & (np.abs(v) < 40.0)
-    lo = hi = 0
-    for _ in range(10):
-        fit = valid & ~line
-        if fit.sum() < 60:
-            return None
-        # divide, not subtract: the line is then relative to the continuum under it
-        res = (1.0 + xs) / (1.0 + np.polyval(np.polyfit(x[fit], xs[fit], 1), x)) - 1.0
-        sig = np.std((res - uniform_filter1d(res, 15, mode="nearest"))[fit])
-        sm = uniform_filter1d(res, 9, mode="nearest")
-        pk = int(np.argmax(np.where(valid & (np.abs(v) < 160.0), sm, -1e9)))
-        lo = hi = pk
-        # 2 sigma of a 9-channel mean; the floor (0.0004 dB) stops a noiseless
-        # scan's tiny continuum curvature from passing for line
-        thr = max(2.0 * sig / 3.0, 1e-4)
-        while lo > 0 and valid[lo - 1] and sm[lo - 1] > thr:
-            lo -= 1
-        while hi < chans - 1 and valid[hi + 1] and sm[hi + 1] > thr:
-            hi += 1
-        new = np.zeros(chans, bool)
-        new[max(lo - 8, 0):hi + 9] = True
-        new &= valid
-        if (new == line).all():
-            break
-        line = new
+    # a fixed line window, baseline outside it: a window grown from the data runs
+    # away on broad structure under the line and the peak then depends on it
+    line = valid & (np.abs(v) < win)
     fit = valid & ~line
+    if fit.sum() < 60:
+        return None
+    # divide, not subtract: the line is then relative to the continuum under it
+    res = (1.0 + xs) / (1.0 + np.polyval(np.polyfit(x[fit], xs[fit], 1), x)) - 1.0
     ipk = int(np.argmax(np.where(line, res, -1e9)))
-    if not line[ipk] or abs(v[ipk]) > 160.0:
+    if not line[ipk]:
         return None
     m = _result(res, v, valid, fit, ipk)
-    m["line_kms"] = (float(v[min(hi + 8, chans - 1)]), float(v[max(lo - 8, 0)]))
+    m["line_kms"] = (win, -win)
     m["baseline_ch"] = int(fit.sum())
     return m
 
