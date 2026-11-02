@@ -61,3 +61,43 @@ def test_outside_carrier_does_not_change_the_line(tmp_path):
     truth = 10 * np.log10(1.06 + 0.01 * np.exp(-0.5 * (3 / 45) ** 2))
     assert m["db"] == pytest.approx(truth, abs=0.01)
     assert np.nanmax(m["spec_db"][690:710]) < 0.05
+
+
+def test_fs_scan_end_to_end(tmp_path, monkeypatch):
+    """The whole scan: alternating retunes, the settling row dropped, the radio back
+    on its own frequency afterwards, and a measured line in the log and the csv."""
+    from aquila import config as cfgmod
+    from aquila.sdr import Synthetic
+    cfg = cfgmod.load(str(tmp_path / "c.json"))
+    cfg.update(sdr="synthetic", sample_rate=2_400_000, state_dir=str(tmp_path / "s"))
+    cfg["hline"] = {"duration_s": 40, "fs_phase_s": 10}
+    cfg["save"]["plots"] = False
+    src = Synthetic(cfg)
+    src.rate = 2_400_000
+    home = src.center_hz
+    tuned, logs = [], []
+    rng = np.random.default_rng(1)
+    chans = 1024
+    off = (np.arange(chans) - chans / 2.0) * src.rate / chans
+    band = 1 + 0.5 * (off / src.rate) ** 2
+
+    def fake_observe(s, dat, obs, log=print, fine=0):
+        tuned.append(s.center_hz)
+        n = int(obs["duration"] / obs["t_sample"])
+        rows = band * _sky(s.center_hz + off, 0.05, 0.0, 0.0) * (
+            1 + 1e-4 * rng.standard_normal((n, chans)))
+        rows[0] *= 5.0                                   # junk while the tuner settles
+        rows.astype(np.float32).tofile(dat)
+        return True
+    monkeypatch.setattr(hline, "observe", fake_observe)
+    hl = hline.HLine(cfg, source=src, log=logs.append)
+    assert hl.scan()
+    f_sig, f_ref = hline.fs_tunings(hl.h, src.rate)
+    assert tuned == [f_sig, f_ref] * 2
+    assert src.center_hz == home
+    d = tmp_path / "s" / "hline"
+    sig = np.fromfile(next(d.glob("obs_*[0-9].dat")), np.float32).reshape(-1, chans)
+    assert sig.shape[0] == 18 and sig.max() < 3.0
+    assert any("frequency switched peak" in m for m in logs), logs
+    row = open(d / "scans.csv").read().splitlines()[-1].split(",")
+    assert float(row[6]) == pytest.approx(10 * np.log10(1.05), abs=0.01)

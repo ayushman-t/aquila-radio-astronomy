@@ -462,26 +462,30 @@ class HLine:
                     obs = obs_parameters(self.cfg, src, h, duration=phase)
                     if not observe(src, tmp, obs, self.log):
                         return False
-                    acc[fc].append(np.fromfile(tmp, dtype=np.float32).reshape(
-                        -1, int(obs["channels"])))
+                    rows = np.fromfile(tmp, dtype=np.float32).reshape(-1, int(obs["channels"]))
+                    # the first row after a retune can hold the tuner settling and the
+                    # tool's start up buffers: dropped in both tunings alike
+                    acc[fc].append(rows[1:] if len(rows) > 2 else rows)
         finally:
             src.center_hz = home
             for p in (tmp, tmp.replace(".dat", ".header")):
                 with contextlib.suppress(OSError):
                     os.remove(p)
+        tsamp = float(h["t_sample"])
+        kept = min(sum(len(a) for a in acc[fc]) for fc in acc)
         for fc, path in ((f_sig, dat), (f_ref, ref)):
             src.center_hz = fc
-            obs = obs_parameters(self.cfg, src, h, duration=phase * pairs)
+            obs = obs_parameters(self.cfg, src, h, duration=round(kept * tsamp))
             obs["fs_throw_hz"] = f"{throw:.0f}"
             obs["fs_ref"] = os.path.basename(ref)
-            np.concatenate(acc[fc]).astype(np.float32).tofile(path + ".tmp")
+            np.concatenate(acc[fc])[:kept].astype(np.float32).tofile(path + ".tmp")
             replace(path + ".tmp", path)
             with open(path.replace(".dat", ".header"), "w") as fh:
                 fh.write(f"mjd={mjd0:.8f}\n")
                 for k2, v2 in obs.items():
                     fh.write(f"{k2}={v2}\n")
         src.center_hz = f_sig
-        obs = obs_parameters(self.cfg, src, h, duration=phase * pairs)
+        obs = obs_parameters(self.cfg, src, h, duration=round(kept * tsamp))
         src.center_hz = home
         obs["fs_throw_hz"] = throw
         return self.record(dat, obs, stamp, ref=ref)
