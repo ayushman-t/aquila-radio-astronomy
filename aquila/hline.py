@@ -216,14 +216,14 @@ def fs_tunings(h, rate):
 
 def _flat_band(R, off_hz, bw):
     """Channels inside the passband, read from the reference itself: out from the
-    centre until the smoothed band falls 1 dB below its middle (the filter shoulder;
-    beyond it the image leaks in and differs between the two tunings). Ripple and
-    bumps inside the band are fine: they cancel."""
+    centre until the smoothed band falls 0.3 dB below its middle, where the filter
+    shoulder starts (beyond it the image leaks in and differs between the two
+    tunings). Ripple and bumps above the middle are fine: they cancel."""
     from scipy.ndimage import median_filter
     lim = min(0.344 * bw, 1.6e6)
     r = median_filter(R, size=15, mode="nearest")
     mid = np.median(r[np.abs(off_hz) < 0.25 * lim])
-    ok = 10.0 * np.log10(np.clip(r, 1e-30, None) / mid) > -1.0
+    ok = 10.0 * np.log10(np.clip(r, 1e-30, None) / mid) > -0.3
     c = len(R) // 2
     lo = hi = c
     while lo > 0 and ok[lo - 1] and abs(off_hz[lo - 1]) < lim:
@@ -231,7 +231,7 @@ def _flat_band(R, off_hz, bw):
     while hi < len(R) - 1 and ok[hi + 1] and abs(off_hz[hi + 1]) < lim:
         hi += 1
     valid = np.zeros(len(R), bool)
-    valid[lo + 8:hi - 7] = True        # a little clear of the shoulder
+    valid[lo + 16:hi - 15] = True       # clear of the shoulder
     return valid
 
 
