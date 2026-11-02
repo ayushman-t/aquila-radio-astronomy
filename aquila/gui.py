@@ -52,9 +52,11 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QStackedWidget,
+    QStyle,
     QStyledItemDelegate,
     QTableView,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -1312,6 +1314,16 @@ class Main(QMainWindow):
                                  "QPushButton:disabled { background: #9ccfae; }")
         self.b_cal.clicked.connect(self.take_cal)
         hdr.addWidget(self.b_cal)
+        hdr.addSpacing(12)
+        self.lb_calm = QLabel("")
+        hdr.addWidget(self.lb_calm)
+        self.b_calinfo = QToolButton()
+        self.b_calinfo.setIcon(self.style().standardIcon(QStyle.SP_MessageBoxInformation))
+        self.b_calinfo.setAutoRaise(True)
+        self.b_calinfo.clicked.connect(
+            lambda: QMessageBox.information(self, "Calibration", self.b_calinfo.toolTip()))
+        hdr.addWidget(self.b_calinfo)
+        self._set_cal_mode("none")
         hdr.addStretch(1)
         topv.addLayout(hdr)
         top = QHBoxLayout()
@@ -1582,6 +1594,10 @@ class Main(QMainWindow):
         self.a_hline.setEnabled(not running and not n.remote and not held)
         self.a_cal.setEnabled(not running and not n.remote and not held)
         has_cal = bool((idx.get("hline") or {}).get("cal"))
+        if s.get("mode") == "hline" and s.get("calibration") == "frequency switching":
+            self._set_cal_mode("frequency switching")
+        else:
+            self._set_cal_mode("receiver" if has_cal else "none")
         self.a_delcal.setEnabled(not n.remote and has_cal)
         self.a_delcal.setToolTip("" if not n.remote else
                                  "A remote node's calibration is deleted on its own computer.")
@@ -1709,6 +1725,8 @@ class Main(QMainWindow):
             self.hl_top.addWidget(self.gb_sky, 1)
         if cal:
             self.lb_raw.setText("Calibrated, power above baseline in dB" + suffix)
+        elif getattr(self, "_cal_mode", "") == "frequency switching":
+            self.lb_raw.setText("Uncalibrated (virgo, raw)" + suffix)
         else:
             self.lb_raw.setText("Uncalibrated (virgo, raw)" + suffix
                                 + "   (no receiver calibration yet)")
@@ -1978,6 +1996,44 @@ class Main(QMainWindow):
             if t is not None and t.isRunning():
                 t.wait(15000)
         e.accept()
+
+    CAL_MODES = {
+        "frequency switching": (
+            "Calibration: frequency switching",
+            "Calibration: frequency switching (automatic)\n\n"
+            "Every 30 seconds the radio switches between two tunings: one with the hydrogen "
+            "line in the band, and one 2 to 3 MHz higher, where there is no hydrogen.\n\n"
+            "The receiver's own band shape, its spurs and the spike in the middle of the band "
+            "are the same in both, so dividing one by the other cancels them, channel by "
+            "channel. What is left is the sky: the line on top of a nearly flat background. "
+            "A straight line fitted outside +-120 km/s takes out the rest, and the plot shows "
+            "the line in dB above it.\n\n"
+            "Nothing to set up and nothing to point at. The reference is measured again every "
+            "minute, so slow drift of the receiver cancels too."),
+        "receiver": (
+            "Calibration: receiver reference",
+            "Calibration: receiver reference\n\n"
+            "Each scan is divided by a stored reference, recorded with a 50 ohm terminator on "
+            "the LNA input or with the dish on cold sky. That removes the receiver's band "
+            "shape. A straight baseline takes out the rest, and the plot shows the line in dB "
+            "above it.\n\n"
+            "Take a new reference when the receiver, its gains or its sample rate change. In "
+            "hydrogen line only mode none is needed: frequency switching is used instead."),
+        "none": (
+            "Calibration: none",
+            "Calibration: none yet\n\n"
+            "Scans show the raw receiver output, with its band shape still in. Use Calibrate "
+            "now with a 50 ohm terminator on the LNA input or the dish on cold sky.\n\n"
+            "In hydrogen line only mode no calibration is needed: the app calibrates itself "
+            "by frequency switching."),
+    }
+
+    def _set_cal_mode(self, mode):
+        label, text = self.CAL_MODES.get(mode, self.CAL_MODES["none"])
+        self._cal_mode = mode
+        self.lb_calm.setText(label)
+        self.b_calinfo.setToolTip(text)
+        self.lb_calm.setToolTip(text)
 
     CAL_TEXT = ("Take one reference scan with either:\n\n"
                 "  a 50 ohm terminator on the LNA input in place of the antenna, or\n"

@@ -216,20 +216,27 @@ def fs_tunings(h, rate):
 
 def _flat_band(R, off_hz, bw):
     """Channels inside the passband, read from the reference itself: out from the
-    centre until the smoothed band falls 0.3 dB below its middle, where the filter
-    shoulder starts (beyond it the image leaks in and differs between the two
-    tunings). Ripple and bumps above the middle are fine: they cancel."""
+    centre until the filter shoulder, where the band is both below its middle and
+    falling steeply (beyond it the image leaks in and differs between the two
+    tunings). Ripple is gradual and cancels anyway, so it does not stop the band."""
     from scipy.ndimage import median_filter
     lim = min(0.344 * bw, 1.6e6)
     r = median_filter(R, size=15, mode="nearest")
     mid = np.median(r[np.abs(off_hz) < 0.25 * lim])
-    ok = 10.0 * np.log10(np.clip(r, 1e-30, None) / mid) > -0.3
+    db = 10.0 * np.log10(np.clip(r, 1e-30, None) / mid)
+    k = max(2, int(round(1e5 / abs(off_hz[1] - off_hz[0]))))     # channels in 100 kHz
     c = len(R) // 2
-    lo = hi = c
-    while lo > 0 and ok[lo - 1] and abs(off_hz[lo - 1]) < lim:
-        lo -= 1
-    while hi < len(R) - 1 and ok[hi + 1] and abs(off_hz[hi + 1]) < lim:
-        hi += 1
+
+    def edge(step):
+        i = c
+        while 0 < i + step < len(R) and abs(off_hz[i + step]) < lim:
+            j = i + step
+            falling = db[j - k * step] - db[j] if 0 <= j - k * step < len(R) else 0.0
+            if db[j] < -3.0 or (db[j] < -0.3 and falling > 0.25):
+                break
+            i = j
+        return i
+    lo, hi = edge(-1), edge(1)
     valid = np.zeros(len(R), bool)
     valid[lo + 16:hi - 15] = True       # clear of the shoulder
     return valid
@@ -264,6 +271,9 @@ def measure_fs(sig_dat, ref_dat, obs, h):
     wide = median_filter(xs, size=31, mode="nearest")
     spike = (np.abs(d) > 6.0 * mad) & (np.abs(d) > 0.5 * np.abs(xs - wide))
     spike = np.convolve(spike, np.ones(5), mode="same") > 0
+    # the DC channels: their offset changes with the tuning on some radios (HackRF,
+    # RTL), so they need not cancel. Bridged from their neighbours.
+    dc = np.abs(off) <= 2
     f = obs["frequency"] + off * chw
     v = 299792.458 * (h["f_rest_hz"] - f) / h["f_rest_hz"]
     win = float(h.get("line_window_kms", 120.0))
@@ -272,6 +282,7 @@ def measure_fs(sig_dat, ref_dat, obs, h):
         # inside the line window a spur can no longer be told from gas
         spike &= np.abs(v) >= win
     xs = np.where(spike, wide, xs)
+    xs[dc] = np.interp(off[dc], off[~dc], xs[~dc])
     x = off * chw / bw
     # a fixed line window, baseline outside it: a window grown from the data runs
     # away on broad structure under the line and the peak then depends on it
@@ -428,6 +439,8 @@ class HLine:
              "dish": {k: v for k, v in self.cfg["dish"].items() if k != "rotator"},
              "site": self.cfg.get("site"),
              "uptime_s": int(time.time() - self.start_ts),
+             "calibration": "frequency switching" if self.h.get("freq_switch", True)
+             else ("receiver" if os.path.exists(self.cal) else "none"),
              "ts": time.time()}
         d.update(extra)
         try:

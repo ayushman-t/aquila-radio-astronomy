@@ -101,3 +101,56 @@ def test_fs_scan_end_to_end(tmp_path, monkeypatch):
     assert any("frequency switched peak" in m for m in logs), logs
     row = open(d / "scans.csv").read().splitlines()[-1].split(",")
     assert float(row[6]) == pytest.approx(10 * np.log10(1.05), abs=0.01)
+
+
+def _sdr_band(model, off, rate, tuning_index):
+    """Passband shapes of the radios the app drives, as measured or as their filters
+    behave: what matters is what is fixed in the receiver and what is not."""
+    x = off / 1e6
+    if model == "rtlsdr":           # steep tuner IF filter edges, mild ripple
+        edge = 1.05 * rate / 2.4e6
+        band = (1 + 0.02 * np.sin(x * 9)) / (1 + (np.abs(x) / edge) ** 16)
+    elif model == "airspy_mini":    # +-0.7 dB ripple, a bump before the upper edge
+        band = 10 ** ((0.7 * np.sin(x * 3.1) + 1.5 * np.exp(-((x - 0.8) / 0.08) ** 2)) / 10)
+        band /= 1 + ((x + 0.05) / 0.98) ** 20
+    elif model == "hydrasdr":       # gentle shoulder below -1.3 MHz where the image leaks
+        band = 1 / (1 + (np.abs(x) / 2.2) ** 12)
+        sh = x < -1.3
+        band[sh] *= 10 ** (-1.3 / 10) * (1 + 0.1 * tuning_index)   # differs per tuning
+    elif model == "hackrf":         # baseband filter at ~0.75 of the rate
+        band = 1 / (1 + (np.abs(x) / (0.75 * rate / 2e6)) ** 10)
+    band = band.copy()
+    dcamp = {"rtlsdr": 4.0, "hackrf": 20.0}.get(model, 1.5)
+    band[len(band) // 2] *= dcamp * (1 + 0.6 * tuning_index)       # DC: not the same twice
+    return band
+
+
+@pytest.mark.parametrize("model,rate", [("rtlsdr", 2_400_000), ("rtlsdr", 3_200_000),
+                                        ("airspy_mini", 3_000_000), ("airspy_mini", 6_000_000),
+                                        ("hydrasdr", 5_000_000), ("hydrasdr", 10_000_000),
+                                        ("hackrf", 5_000_000), ("hackrf", 10_000_000),
+                                        ("hackrf", 20_000_000)])
+def test_each_radio(tmp_path, model, rate):
+    rng = np.random.default_rng(3)
+    chans = 1024
+    f_sig, f_ref = hline.fs_tunings(hline.DEFAULTS, rate)
+    off = (np.arange(chans) - chans / 2.0) * rate / chans
+    files = {}
+    for k, (name, fc, g) in enumerate((("sig", f_sig, 1.0), ("ref", f_ref, 1.002))):
+        p = g * _sdr_band(model, off, rate, k) * _sky(fc + off, 0.05, 0.008, 0.02)
+        rows = p * (1 + 3e-4 * rng.standard_normal((20, chans)))
+        rows.astype(np.float32).tofile(tmp_path / f"{name}.dat")
+        files[name] = str(tmp_path / f"{name}.dat")
+    obs = {"frequency": f_sig, "bandwidth": rate, "channels": chans}
+    m = hline.measure_fs(files["sig"], files["ref"], obs, dict(hline.DEFAULTS))
+    assert m is not None
+    truth = 10 * np.log10(1.05 + 0.008 * np.exp(-0.5 * (3 / 45) ** 2))
+    tol = 0.02 if rate >= 20_000_000 else 0.01       # 20 kHz channels round off a 14 km/s line
+    assert m["db"] == pytest.approx(truth, abs=tol)
+    assert m["kms"] == pytest.approx(3.0, abs=2.0)
+    # nothing left at the DC channel (-53 km/s) or at the band edges
+    ok = ~np.isnan(m["spec_db"])
+    far = ok & (np.abs(m["v"] - 3.0) > 120)
+    assert np.abs(m["spec_db"][far]).max() < 0.01
+    dcv = np.abs(m["v"] + 52.8) < 2
+    assert np.abs(m["spec_db"][dcv] - 10 * np.log10(1 + 0.008 * np.exp(-0.5 * (55.8 / 45) ** 2) + 0.05 * np.exp(-0.5 * (55.8 / 6) ** 2))).max() < 0.01
