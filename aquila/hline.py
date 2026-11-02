@@ -211,6 +211,26 @@ def fs_tunings(h, rate):
     return int(round(f_sig)), int(round(f_sig + fs_throw(rate, h.get("fs_throw_hz", 0))))
 
 
+def _flat_band(R, off_hz, bw):
+    """Channels in the flat part of the passband, read from the reference itself: out
+    from the centre while the smoothed band stays within 0.5 dB of its middle. Beyond
+    the filter shoulders the image leaks in and differs between the two tunings."""
+    from scipy.ndimage import median_filter
+    lim = min(0.344 * bw, 1.6e6)
+    r = median_filter(R, size=15, mode="nearest")
+    mid = np.median(r[np.abs(off_hz) < 0.25 * lim])
+    ok = np.abs(10.0 * np.log10(np.clip(r, 1e-30, None) / mid)) < 0.5
+    c = len(R) // 2
+    lo = hi = c
+    while lo > 0 and ok[lo - 1] and abs(off_hz[lo - 1]) < lim:
+        lo -= 1
+    while hi < len(R) - 1 and ok[hi + 1] and abs(off_hz[hi + 1]) < lim:
+        hi += 1
+    valid = np.zeros(len(R), bool)
+    valid[lo + 8:hi - 7] = True        # a little clear of the shoulder
+    return valid
+
+
 def measure_fs(sig_dat, ref_dat, obs, h):
     """Frequency switched spectrum, reduced the standard way.
 
@@ -229,17 +249,19 @@ def measure_fs(sig_dat, ref_dat, obs, h):
     bw = float(obs["bandwidth"])
     chw = bw / chans
     xs = (S - R) / (R + 1e-30)
-    # receiver spurs sit in the same channel in both tunings and cancel; an outside
-    # carrier does not. Clip only channels that stand far off both neighbours: a
-    # running median would also shave the top off a narrow line.
-    med = median_filter(xs, size=3, mode="nearest")
+    off = np.arange(chans) - chans / 2.0
+    valid = _flat_band(R, off * chw, bw)
+    # spurs: the receiver's own sit in the same channel in both tunings and cancel;
+    # a carrier fixed in sky or RF frequency (outside transmitters, clock harmonics at
+    # round MHz) does not. They are a few channels wide, the line is not: a channel
+    # standing far off a 9-channel median is clipped, and its two neighbours with it.
+    med = median_filter(xs, size=9, mode="nearest")
     d = xs - med
-    mad = np.median(np.abs(d - np.median(d))) * 1.4826 + 1e-12
+    mad = np.median(np.abs(d[valid] - np.median(d[valid]))) * 1.4826 + 1e-12
     wide = median_filter(xs, size=31, mode="nearest")
     spike = (np.abs(d) > 6.0 * mad) & (np.abs(d) > 0.5 * np.abs(xs - wide))
-    xs = np.where(spike, med, xs)
-    off = np.arange(chans) - chans / 2.0
-    valid = np.abs(off * chw) < min(0.344 * bw, 1.6e6)
+    spike = np.convolve(spike, np.ones(5), mode="same") > 0
+    xs = np.where(spike, wide, xs)
     f = obs["frequency"] + off * chw
     v = 299792.458 * (h["f_rest_hz"] - f) / h["f_rest_hz"]
     x = off * chw / bw
