@@ -1149,11 +1149,7 @@ class Main(QMainWindow):
         self.cfg = config.load(self.cfg_path)
         dlg = QuickSetup(self.cfg, self)
         r = dlg.exec()
-        probe = getattr(dlg, "_probe", None)
-        if probe is not None and probe.isRunning():
-            probe.done.connect(lambda *_: dlg.deleteLater())
-        else:
-            dlg.deleteLater()
+        self._retire_dialog(dlg)
         if r == QDialog.Accepted:
             self._save_cfg(dlg.apply())
             if (self.cfg.get("app") or {}).get("observe_on_open"):
@@ -2280,12 +2276,25 @@ class Main(QMainWindow):
         try:
             self._settings_dialog(dlg)
         finally:
-            # one dialog per open would pile up otherwise; its SDR check must end first
-            probe = getattr(dlg, "_probe", None)
-            if probe is not None and probe.isRunning():
-                probe.done.connect(lambda *_: dlg.deleteLater())
-            else:
+            self._retire_dialog(dlg)
+
+    def _retire_dialog(self, dlg):
+        """One dialog per open would pile up otherwise; its SDR checks must end first, and
+        the window waits for them on close."""
+        busy = [t for t in (getattr(dlg, "_probe", None), getattr(dlg, "_scan", None))
+                if t is not None and t.isRunning()]
+        if not busy:
+            dlg.deleteLater()
+            return
+        left = [len(busy)]
+
+        def one_done():
+            left[0] -= 1
+            if not left[0]:
                 dlg.deleteLater()
+        self._calls = getattr(self, "_calls", []) + busy
+        for t in busy:
+            t.finished.connect(one_done)
 
     def _local_sdr(self):
         """Name of the SDR this computer's node is observing with now, or None."""
