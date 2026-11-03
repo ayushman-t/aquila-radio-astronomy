@@ -789,6 +789,11 @@ class Settings(QDialog):
         snote.setStyleSheet("color: gray")
         form.addRow(snote)
         hl = cfg.get("hline") or {}
+        self.fs = QCheckBox("Frequency switching in hydrogen line only mode")
+        self.fs.setChecked(bool(hl.get("freq_switch", True)))
+        self.fs.setToolTip("On: no calibration needed. Off: scans use a reference taken with "
+                           "Calibrate now.")
+        form.addRow("Calibration:", self.fs)
         self.med_n = QSpinBox()
         self.med_n.setRange(0, 201)
         self.med_n.setSpecialValueText("Auto (about 5 km/s)")
@@ -915,7 +920,8 @@ class Settings(QDialog):
                      "spectra": self.s_spectra.isChecked(), "raw_iq": self.s_raw.isChecked()}
         c["app"] = dict(c.get("app") or {}, observe_on_open=self.auto_obs.isChecked(),
                         narrowband=self.narrow.isChecked())
-        c["hline"] = dict(c.get("hline") or {}, n=self.med_n.value(), m=self.med_m.value())
+        c["hline"] = dict(c.get("hline") or {}, n=self.med_n.value(), m=self.med_m.value(),
+                         freq_switch=self.fs.isChecked())
         c["_autostart"] = self.auto_login.isChecked()
         c["center_mhz"] = self.freq.value()
         c["sample_rate"] = int(self.rate.currentData() or 0)
@@ -1571,6 +1577,13 @@ class Main(QMainWindow):
         # our own child observes the local node only; a remote node is judged by its status
         running = (not n.remote and self.proc is not None
                    and self.proc.state() != QProcess.NotRunning)
+        if s.get("mode") == "hline":
+            # a node with the line alone has nothing on the search tabs: open on its data,
+            # once per node, so the tabs can still be clicked
+            if (getattr(self, "_hl_opened", None) != n.base
+                    and self.tabs.currentIndex() in (self.sv_tab, self.c_tab)):
+                self.tabs.setCurrentIndex(self.hl_tab)
+            self._hl_opened = n.base
         try:
             age = time.time() - float(s.get("ts") or 0)
         except (TypeError, ValueError):
@@ -1587,12 +1600,6 @@ class Main(QMainWindow):
             state = f"stale, last seen {int(age // 60)} min ago"
         elif s.get("mode") == "hline":
             state = f"hydrogen line: {state}"
-            # a node with the line alone has nothing on the search tabs: open on its data,
-            # once per node, so the tabs can still be clicked
-            if (getattr(self, "_hl_opened", None) != n.base
-                    and self.tabs.currentIndex() in (self.sv_tab, self.c_tab)):
-                self.tabs.setCurrentIndex(self.hl_tab)
-            self._hl_opened = n.base
         elif s.get("seti") is False:
             state = f"{state} (hydrogen line only, FFT too small for the narrowband search)"
         if getattr(n, "over_budget", False):
@@ -1738,6 +1745,9 @@ class Main(QMainWindow):
             when = stamp(row[5] if len(row) > 5 else "", scan_time(row[1]))
         elif sel:
             when = scan_time(sel)
+        self.hl_cal._placeholder = ("No plot yet. A scan takes about 5 minutes."
+                                    if self._cal_mode == "frequency switching" else
+                                    "No calibrated plot yet. Take a receiver calibration first.")
         self.hl_cal.set_data(cal)
         self.hl_raw.set_data(raw)
         if sel and "sel_raw" in d:
@@ -2036,7 +2046,8 @@ class Main(QMainWindow):
             "A straight line fitted outside +-120 km/s takes out the rest, and the plot shows "
             "the line in dB above it.\n\n"
             "Nothing to set up and nothing to point at. The reference is measured again every "
-            "minute, so slow drift of the receiver cancels too."),
+            "minute, so slow drift of the receiver cancels too. It can be switched off in "
+            "Settings."),
         "receiver": (
             "Calibration: receiver reference",
             "Calibration: receiver reference\n\n"
@@ -2054,6 +2065,12 @@ class Main(QMainWindow):
             "In hydrogen line only mode no calibration is needed: the app calibrates itself "
             "by frequency switching."),
     }
+
+    def _cal_text(self):
+        if self._cal_mode == "frequency switching":
+            return (self.CAL_TEXT + "\n\nThis node uses frequency switching, so the reference "
+                    "is only used if you switch that off in Settings.")
+        return self.CAL_TEXT
 
     def _set_cal_mode(self, mode):
         label, text = self.CAL_MODES.get(mode, self.CAL_MODES["none"])
@@ -2081,7 +2098,7 @@ class Main(QMainWindow):
             # an observer is running here (ours or another process): it takes the reference
             # itself between blocks, so nothing is stopped or restarted
             r = QMessageBox.question(
-                self, "Calibration", self.CAL_TEXT + "\n\nObserving is running: the reference "
+                self, "Calibration", self._cal_text() + "\n\nObserving is running: the reference "
                 "is taken after the current block and observing carries on. Queue it now?")
             if r != QMessageBox.Yes:
                 return
@@ -2097,7 +2114,8 @@ class Main(QMainWindow):
             self.sb.showMessage("Calibration queued; it runs after the current block.", 8000)
             self.refresh(force=True)
             return
-        r = QMessageBox.question(self, "Calibration", self.CAL_TEXT + "\n\nReady to record it now?")
+        r = QMessageBox.question(self, "Calibration",
+                                 self._cal_text() + "\n\nReady to record it now?")
         if r != QMessageBox.Yes:
             return
         self.start("cal")
@@ -2111,7 +2129,7 @@ class Main(QMainWindow):
             n.token = tok.strip()
             self._remember(n)
         r = QMessageBox.question(
-            self, "Calibration", self.CAL_TEXT + f"\n\nThe node {n.name} takes the reference "
+            self, "Calibration", self._cal_text() + f"\n\nThe node {n.name} takes the reference "
             "after its current block and keeps observing. Make sure the dish is on cold sky, "
             "or someone at the dish has the terminator in place. Queue it now?")
         if r != QMessageBox.Yes:

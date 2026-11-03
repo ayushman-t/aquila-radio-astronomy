@@ -659,7 +659,8 @@ class HLine:
                 if new:
                     w.writerow(CSV_HEAD.split(","))
                 w.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), os.path.basename(dat),
-                            num("pct", "{:.2f}"), num("kms", "{:.1f}"), int(usable_cal),
+                            num("pct", "{:.2f}"), num("kms", "{:.1f}"),
+                            int(usable_cal and meas is not None),
                             time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()),
                             num("db", "{:.3f}"), num("rms_db", "{:.4f}")])
         if meas is None:

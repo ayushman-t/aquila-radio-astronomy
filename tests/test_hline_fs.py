@@ -155,3 +155,20 @@ def test_each_radio(tmp_path, model, rate):
     dcv = np.abs(m["v"] + 52.8) < 2
     sky = 1 + 0.008 * np.exp(-0.5 * (55.8 / 45) ** 2) + 0.05 * np.exp(-0.5 * (55.8 / 6) ** 2)
     assert np.abs(m["spec_db"][dcv] - 10 * np.log10(sky)).max() < 0.01
+
+
+def test_switching_off_uses_plain_scans(tmp_path, monkeypatch):
+    import json
+
+    from aquila import config as cfgmod
+    from aquila.sdr import Synthetic
+    cfg = cfgmod.load(str(tmp_path / "c.json"))
+    cfg.update(sdr="synthetic", sample_rate=2_400_000, state_dir=str(tmp_path / "s"))
+    cfg["hline"] = {"freq_switch": False}
+    node = hline.HLine(cfg, source=Synthetic(cfg), log=lambda m: None)
+    monkeypatch.setattr(node, "fs_scan", lambda: pytest.fail("switched with the setting off"))
+    monkeypatch.setattr(hline, "observe", lambda *a, **k: False)
+    assert node.scan() is False
+    node.status("capturing")
+    st = json.load(open(tmp_path / "s" / "status.json"))
+    assert st["calibration"] == "none"
