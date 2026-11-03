@@ -1218,6 +1218,7 @@ class Main(QMainWindow):
         return a
 
     def _node_changed(self):
+        self._hl_opened = None
         self._sv_selected = None
         self._sv_rows = None
         self._last_idx = None
@@ -1586,6 +1587,12 @@ class Main(QMainWindow):
             state = f"stale, last seen {int(age // 60)} min ago"
         elif s.get("mode") == "hline":
             state = f"hydrogen line: {state}"
+            # a node with the line alone has nothing on the search tabs: open on its data,
+            # once per node, so the tabs can still be clicked
+            if (getattr(self, "_hl_opened", None) != n.base
+                    and self.tabs.currentIndex() in (self.sv_tab, self.c_tab)):
+                self.tabs.setCurrentIndex(self.hl_tab)
+            self._hl_opened = n.base
         elif s.get("seti") is False:
             state = f"{state} (hydrogen line only, FFT too small for the narrowband search)"
         if getattr(n, "over_budget", False):
