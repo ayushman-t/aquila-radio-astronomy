@@ -1,3 +1,15 @@
+aquila-radio-astronomy (0.2.11) unstable; urgency=medium
+
+  * A node observing the hydrogen line alone opens on the Hydrogen line tab.
+  * Settings: switch for frequency switching, on by default. Calibrate now
+    says when its reference is not used.
+  * Settings and Quick setup: closing the dialog waits for its receiver scan,
+    so cancelling quickly cannot crash the app.
+  * The first scan message no longer asks for a calibration when none is needed.
+  * A scan with no measurement is no longer marked calibrated.
+
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Tue, 03 Nov 2026 20:30:00 +0530
+
 aquila-radio-astronomy (0.2.10) unstable; urgency=medium
 
   * Hydrogen line only mode: frequency switching, no calibration needed. The
