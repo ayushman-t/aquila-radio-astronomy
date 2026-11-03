@@ -34,6 +34,57 @@ def which(tool):
     return shutil.which(tool, path=path)
 
 
+_tool_job = None
+
+
+def _bind_to_this_process(proc):
+    """Windows: end the SDR tool whenever this process ends, however it ends. A tool left
+    behind writes to a dead pipe for ever and holds the radio until a reboot. Done with a
+    kill-on-close job object, whose only handle this process owns. Observing goes on
+    without it if Windows refuses."""
+    global _tool_job
+    import ctypes
+    from ctypes import wintypes
+
+    class Basic(ctypes.Structure):
+        _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64),
+                    ("PerJobUserTimeLimit", ctypes.c_int64),
+                    ("LimitFlags", wintypes.DWORD),
+                    ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t),
+                    ("ActiveProcessLimit", wintypes.DWORD),
+                    ("Affinity", ctypes.c_size_t),
+                    ("PriorityClass", wintypes.DWORD),
+                    ("SchedulingClass", wintypes.DWORD)]
+
+    class Extended(ctypes.Structure):
+        _fields_ = [("Basic", Basic),
+                    ("IoInfo", ctypes.c_uint64 * 6),
+                    ("ProcessMemoryLimit", ctypes.c_size_t),
+                    ("JobMemoryLimit", ctypes.c_size_t),
+                    ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                    ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.CreateJobObjectW.restype = ctypes.c_void_p
+    k.CreateJobObjectW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p)
+    k.SetInformationJobObject.restype = wintypes.BOOL
+    k.SetInformationJobObject.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p,
+                                          wintypes.DWORD)
+    k.AssignProcessToJobObject.restype = wintypes.BOOL
+    k.AssignProcessToJobObject.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
+    if _tool_job is None:
+        job = k.CreateJobObjectW(None, None)
+        if not job:
+            return False
+        info = Extended()
+        info.Basic.LimitFlags = 0x2000                  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not k.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):
+            return False
+        _tool_job = job
+    return bool(k.AssignProcessToJobObject(_tool_job, int(proc._handle)))
+
+
 class _NamedPipe:
     """Server end of a Windows named pipe; the SDR tool writes to its path."""
     PIPE_ACCESS_INBOUND = 0x1
@@ -131,6 +182,8 @@ class Source:
         cmd = [pipe.path if a in ("-", "/dev/stdout") else a for a in cmd]
         self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=self.errf,
                                      creationflags=subprocess.CREATE_NO_WINDOW)
+        with contextlib.suppress(Exception):
+            _bind_to_this_process(self.proc)
         self.proc.stdout = pipe.connect(self.proc)
         return self.proc
 

@@ -1,3 +1,17 @@
+aquila-radio-astronomy (0.2.10) unstable; urgency=medium
+
+  * Hydrogen line only mode: frequency switching, no calibration needed. The
+    tab shows which calibration is in use, with an info button.
+  * Hydrogen line in dB above baseline, shown beside the raw plot.
+  * Median filter n and m in Settings.
+  * Hydrogen line only mode keeps retrying a failed capture.
+  * Windows: the capture tool ends with the app, so a crash cannot leave the
+    radio locked until a reboot.
+  * Settings: switch to let other computers on the network see this node.
+  * Node API keeps retrying when its address is not up yet at boot.
+
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Tue, 03 Nov 2026 17:45:00 +0530
+
 aquila-radio-astronomy (0.2.9) unstable; urgency=medium
 
   * Linux: the window's class name now equals the launcher entry, which is

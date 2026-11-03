@@ -47,7 +47,7 @@ Settings has the rest, with working defaults. Advanced values live in the config
 
 ![narrowband search](docs/survey.png)
 
-**Hydrogen line.** The same block is binned to 1024 channels and written as a [virgo](https://github.com/0xCoto/VIRGO) scan, so the line plots update every block while the search runs. Take one receiver reference, a 50 ohm terminator on the LNA or a patch of cold sky, and every scan after that is calibrated. A hydrogen-line-only mode exists for machines too weak for the big FFT.
+**Hydrogen line.** The same block is binned to 1024 channels and written as a [virgo](https://github.com/0xCoto/VIRGO) scan, so the line plots update every block while the search runs. Take one receiver reference, a 50 ohm terminator on the LNA or a patch of cold sky, and every scan after that is calibrated. A hydrogen-line-only mode exists for machines too weak for the big FFT, and it needs no reference: the radio alternates every 30 s between the line and a tuning 2 to 3 MHz higher, so the receiver shape cancels. The result is in dB above a straight baseline, next to the raw plot.
 
 **Nothing piles up.** Raw samples never touch the disk, memory is fixed, and disk use is capped, so a node runs for months unattended. What is kept: hit tables, a thumbnail per block, small snippets around the strongest hits, the hydrogen line scans.
 

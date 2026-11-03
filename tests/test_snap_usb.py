@@ -2,7 +2,11 @@
 offers the permission dialog; outside a snap it never runs snapctl."""
 import subprocess
 
-from aquila import gui
+import pytest
+
+pytest.importorskip("PySide6")
+
+from aquila import gui  # noqa: E402
 
 
 def test_outside_a_snap_nothing_is_checked(monkeypatch):

@@ -146,7 +146,8 @@ def plot(dat, png, obs, h, cal_file=""):
     rows = int(round(obs["duration"] / obs["t_sample"]))
     m = min(int(h["m"]), max(3, rows - 1))
     virgo.plot(obs_parameters=obs, obs_file=dat, cal_file=cal_file, f_rest=h["f_rest_hz"],
-               dB=True, n=median_channels(h, obs), m=m, slope_correction=bool(cal_file), plot_file=png)
+               dB=True, n=median_channels(h, obs), m=m, slope_correction=bool(cal_file),
+               plot_file=png)
 
 
 def measure(dat, obs, h, cal_file=""):
@@ -757,7 +758,8 @@ class HLine:
                 if fails < 20:
                     self.status("retry", scans=self.n_scans)
                 elif fails == 20:
-                    self.log("20 capture failures in a row: status.json left stale for the watchdog")
+                    self.log("20 capture failures in a row: "
+                             "status.json left stale for the watchdog")
                 time.sleep(5)
         self.status("stopped", scans=self.n_scans)
         release_lock(self.lock)

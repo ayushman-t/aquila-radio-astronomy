@@ -153,4 +153,5 @@ def test_each_radio(tmp_path, model, rate):
     far = ok & (np.abs(m["v"] - 3.0) > 120)
     assert np.abs(m["spec_db"][far]).max() < 0.01
     dcv = np.abs(m["v"] + 52.8) < 2
-    assert np.abs(m["spec_db"][dcv] - 10 * np.log10(1 + 0.008 * np.exp(-0.5 * (55.8 / 45) ** 2) + 0.05 * np.exp(-0.5 * (55.8 / 6) ** 2))).max() < 0.01
+    sky = 1 + 0.008 * np.exp(-0.5 * (55.8 / 45) ** 2) + 0.05 * np.exp(-0.5 * (55.8 / 6) ** 2)
+    assert np.abs(m["spec_db"][dcv] - 10 * np.log10(sky)).max() < 0.01
