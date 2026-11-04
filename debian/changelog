@@ -1,3 +1,17 @@
+aquila-radio-astronomy (0.2.12) unstable; urgency=medium
+
+  * Frequency switching: the line sits on the other side of the band centre and
+    the baseline is fitted outside +-180 km/s, so broad structure beside the
+    line no longer bends it.
+  * Settings: receiver gain for each stage, a switch to ignore pulsed
+    interference (off by default) and a switch to smooth the calibrated plot
+    (on by default). The measured peak is never taken from the smoothed line.
+  * Search tabs say when a node observes the hydrogen line only.
+  * The log and block table say hits, not candidates, before tiering.
+  * Status says when the receiver is missing instead of capturing.
+
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Thu, 05 Nov 2026 01:30:00 +0530
+
 aquila-radio-astronomy (0.2.11) unstable; urgency=medium
 
   * A node observing the hydrogen line alone opens on the Hydrogen line tab.

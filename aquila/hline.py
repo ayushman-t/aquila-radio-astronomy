@@ -41,7 +41,18 @@ DEFAULTS = {
     "freq_switch": True,
     "fs_phase_s": 30,
     "fs_throw_hz": 0,
-    "line_window_kms": 120,   # frequency switched: baseline fitted outside +-this
+    # frequency switched: baseline fitted outside +-this. Measured on the 0.9 m by retuning:
+    # broad structure fixed in sky frequency reaches about -170 km/s, so +-120 fitted part of
+    # it as baseline
+    "line_window_kms": 180,
+    # scan only between the bursts of pulsed interference (see quiet_frames). Off unless
+    # a site needs it, and it needs a gain below compression: an overdriven receiver
+    # squeezes the bursts down to the gaps, and the line was lost at full VGA (measured)
+    "blank_pulses": False,
+    # draw the calibrated line with a Gaussian of this sigma (the measured peak and the
+    # saved spectrum never see it): rounds off the steps a median leaves in noisy data
+    "plot_smooth": True,
+    "plot_smooth_kms": 2.0,
 }
 
 
@@ -70,13 +81,39 @@ def obs_parameters(cfg, src, h, channels=None, t_sample=None, duration=None):
             "az_alt": f"{cfg['dish']['az']:.1f} {cfg['dish']['el']:.1f}"}
 
 
-def observe(src, dat, obs, log=print, fine=0):
+def quiet_frames(frames, factor=1.3):
+    """Which FFT frames of one row hold no burst of pulsed interference.
+
+    A strong pulsed signal (a TDD radio frame, a radar) buries the sky while it is on,
+    changes from moment to moment and differs between two scans, so neither a
+    calibration nor frequency switching can remove it. Sky noise is steady from frame
+    to frame, so a frame well above the row's quietest ones holds a burst. Without
+    pulses every frame stays and nothing changes."""
+    power = (np.abs(frames) ** 2).mean(axis=1)
+    keep = power < factor * np.percentile(power, 10)
+    if keep.sum() < 5:
+        keep = power <= np.percentile(power, 20)
+    return keep
+
+
+def quiet_rows(rows, factor=1.05):
+    """Which rows of a scan have no raised floor. Interference that fills the gaps between
+    pulses gets past quiet_frames and lowers the line without bending the baseline."""
+    power = rows.mean(axis=1)
+    keep = power < factor * np.percentile(power, 10)
+    return keep if keep.sum() >= 10 else np.ones(len(rows), bool)
+
+
+def observe(src, dat, obs, log=print, fine=0, blank=False, kept=None):
     """Stream one scan into dat (float32 rows) and write the .header. Returns True
     when at least 95 percent of the rows arrived.
 
     fine > 0 also writes dat's "_fine" twin from the same samples, made the way a SETI
     block makes its H-line scan (fine-channel FFT, binned down). A cal must be divided
-    into scans made the same way, or the two channelizers' shapes leave a slope."""
+    into scans made the same way, or the two channelizers' shapes leave a slope.
+
+    blank averages only the frames quiet_frames keeps; the share kept in each row is
+    appended to the list kept when one is given."""
     chans, secs, tsamp = int(obs["channels"]), int(obs["duration"]), float(obs["t_sample"])
     rate = src.rate
     per_row = int(rate * tsamp)
@@ -95,7 +132,13 @@ def observe(src, dat, obs, log=print, fine=0):
     for fr in src.frames(per_row):
         z = src.to_complex(fr)
         k = z.size // chans
-        sp = np.abs(np.fft.fft(z[:k * chans].reshape(k, chans) * win, axis=1)) ** 2
+        frames = z[:k * chans].reshape(k, chans)
+        if blank and k:
+            keep = quiet_frames(frames)
+            frames = frames[keep]
+            if kept is not None:
+                kept.append(float(keep.mean()))
+        sp = np.abs(np.fft.fft(frames * win, axis=1)) ** 2
         rows.append(np.fft.fftshift(sp.mean(0)).astype(np.float32))
         if fine:
             fbuf = np.concatenate((fbuf, z.astype(np.complex64)))
@@ -217,7 +260,9 @@ def _result(x, v, valid, fit, i, unsmoothed=None):
             "rms_db": float(10.0 * np.log10(1.0 + rms)), "v": v, "spec_db": spec_db}
 
 
-FS_LINE_IF_HZ = -250e3      # where the line sits in the signal band: clear of the DC channel
+# where the line sits in the signal band, as a share of the rate: near the middle, so there
+# is line free band on both sides of it for the baseline, and clear of the DC channel
+FS_LINE_IF = 0.04
 
 
 def fs_throw(rate, throw_hz=0):
@@ -229,7 +274,7 @@ def fs_throw(rate, throw_hz=0):
 
 def fs_tunings(h, rate):
     """(signal, reference) centre frequencies in Hz."""
-    f_sig = h["f_rest_hz"] - FS_LINE_IF_HZ
+    f_sig = h["f_rest_hz"] - FS_LINE_IF * rate
     return int(round(f_sig)), int(round(f_sig + fs_throw(rate, h.get("fs_throw_hz", 0))))
 
 
@@ -273,8 +318,11 @@ def measure_fs(sig_dat, ref_dat, obs, h):
     relative to the continuum under it."""
     from scipy.ndimage import median_filter
     chans = int(obs["channels"])
-    S = np.fromfile(sig_dat, dtype=np.float32).reshape(-1, chans).mean(0)
-    R = np.fromfile(ref_dat, dtype=np.float32).reshape(-1, chans).mean(0)
+    S = np.fromfile(sig_dat, dtype=np.float32).reshape(-1, chans)
+    R = np.fromfile(ref_dat, dtype=np.float32).reshape(-1, chans)
+    if h.get("blank_pulses"):
+        S, R = S[quiet_rows(S)], R[quiet_rows(R)]
+    S, R = S.mean(0), R.mean(0)
     bw = float(obs["bandwidth"])
     chw = bw / chans
     xs = (S - R) / (R + 1e-30)
@@ -295,7 +343,7 @@ def measure_fs(sig_dat, ref_dat, obs, h):
     dc = np.abs(off) <= 2
     f = obs["frequency"] + off * chw
     v = 299792.458 * (h["f_rest_hz"] - f) / h["f_rest_hz"]
-    win = float(h.get("line_window_kms", 120.0))
+    win = float(h.get("line_window_kms", 180.0))
     if chw > 6e3:
         # channels so wide (above ~6 Msps) that a narrow line is a few channels too:
         # inside the line window a spur can no longer be told from gas
@@ -305,6 +353,10 @@ def measure_fs(sig_dat, ref_dat, obs, h):
     x = off * chw / bw
     # a fixed line window, baseline outside it: a window grown from the data runs
     # away on broad structure under the line and the peak then depends on it
+    # a line fitted from one side only swings freely across the other, so the window
+    # narrows until the band has baseline on both sides of the line
+    while win > 120 and min((valid & (v > win)).sum(), (valid & (v < -win)).sum()) < 30:
+        win -= 10
     line = valid & (np.abs(v) < win)
     fit = valid & ~line
     if fit.sum() < 60:
@@ -329,12 +381,16 @@ def peak_percent(dat, obs, h, cal_file=""):
     return None if m is None else (m["pct"], m["kms"])
 
 
-def plot_db(m, png, title=""):
-    """The calibrated spectrum in dB above its baseline, against velocity."""
+def plot_db(m, png, title="", smooth_kms=0.0):
+    """The calibrated spectrum in dB above its baseline, against velocity. smooth_kms
+    only changes the line drawn: the peak marked and quoted stays as measured."""
     _patch_matplotlib()
     import matplotlib.pyplot as plt
     ok = ~np.isnan(m["spec_db"])
     v, s = m["v"][ok], m["spec_db"][ok]
+    if smooth_kms > 0 and v.size > 1:
+        from scipy.ndimage import gaussian_filter1d
+        s = gaussian_filter1d(s, smooth_kms / abs(v[1] - v[0]), mode="nearest")
     fig, ax = plt.subplots(figsize=(10, 5.2), dpi=100)
     ax.axhspan(-m["rms_db"], m["rms_db"], color="0.85", lw=0, label="baseline noise (1 rms)")
     ax.axhline(0.0, color="0.45", lw=0.8)
@@ -349,7 +405,13 @@ def plot_db(m, png, title=""):
         note += f"    median filter {m['n']} channels"
     if m.get("method"):
         note = m["method"] + "    " + note
-    ax.set_title((title + "\n" if title else "") + note, fontsize=10)
+    extra = []
+    if smooth_kms > 0:
+        extra.append(f"drawn with {smooth_kms:g} km/s Gaussian")
+    if m.get("quiet_pct", 100) < 90:
+        extra.append(f"pulsed interference removed, {m['quiet_pct']:.0f}% of the time kept")
+    lines = ([title] if title else []) + [note] + (["    ".join(extra)] if extra else [])
+    ax.set_title("\n".join(lines), fontsize=10)
     ax.grid(alpha=0.3)
     ax.legend(loc="upper left", fontsize=9, frameon=False)
     fig.tight_layout()
@@ -436,7 +498,8 @@ class HLine:
                      "or cold sky well off the galactic plane")
             self.keep_previous_cal()
             ok = observe(self.src, self.cal, obs, self.log,
-                         fine=int(self.cfg["advanced"].get("n_chan") or 0))
+                         fine=int(self.cfg["advanced"].get("n_chan") or 0),
+                         blank=self.h.get("blank_pulses", False))
             if ok:
                 self.log(f"cal saved: {self.cal}")
             return ok
@@ -474,13 +537,15 @@ class HLine:
 
     def scan(self):
         self.cfg.update(config.pointing(self.cfg))
+        self._kept = []
         if self.h.get("freq_switch", True):
             return self.fs_scan()
         obs = obs_parameters(self.cfg, self.src, self.h)
         self.status("capturing", scans=self.n_scans)
         stamp = time.strftime("%Y%m%d_%H%M%S")
         dat = os.path.join(self.dir, f"obs_{stamp}.dat")
-        if not observe(self.src, dat, obs, self.log):
+        if not observe(self.src, dat, obs, self.log,
+                       blank=self.h.get("blank_pulses", False), kept=self._kept):
             return False
         return self.record(dat, obs, stamp)
 
@@ -509,7 +574,8 @@ class HLine:
                         return False
                     src.center_hz = fc
                     obs = obs_parameters(self.cfg, src, h, duration=phase)
-                    if not observe(src, tmp, obs, self.log):
+                    if not observe(src, tmp, obs, self.log,
+                                   blank=self.h.get("blank_pulses", False), kept=self._kept):
                         return False
                     rows = np.fromfile(tmp, dtype=np.float32).reshape(-1, int(obs["channels"]))
                     # the first row after a retune can hold the tuner settling and the
@@ -617,6 +683,9 @@ class HLine:
                 self.log("line strength not measured: without a calibration the raw passband "
                          "cannot be fitted reliably on this receiver. Take a calibration "
                          "(50 ohm terminator or cold sky) and every scan gets a number.")
+            kept = getattr(self, "_kept", None)
+            if meas is not None and kept and not block:
+                meas["quiet_pct"] = 100.0 * float(np.median(kept))
         except Exception as e:
             self.log(f"measure failed: {e}")
         if plots and not getattr(self, "_no_virgo", False):
@@ -632,7 +701,10 @@ class HLine:
         if plots:
             try:
                 if usable_cal and meas is not None:
-                    plot_db(meas, cal_png, f"{self.cfg.get('name') or 'node'}   scan {stamp}")
+                    smooth = (float(self.h.get("plot_smooth_kms", 2.0))
+                              if self.h.get("plot_smooth", True) else 0.0)
+                    plot_db(meas, cal_png, f"{self.cfg.get('name') or 'node'}   scan {stamp}",
+                            smooth)
                     _copy(cal_png, os.path.join(self.dir, "latest.png"))
                 elif os.path.exists(self.cal) or ref:
                     if not usable_cal and why != getattr(self, "_cal_warned", None):

@@ -690,6 +690,12 @@ class Settings(QDialog):
         self.bias.setToolTip("Off if the LNA has its own supply or there is no LNA. "
                              "Takes effect when observing is next started.")
         form.addRow("", self.bias)
+        self.gain_row = QHBoxLayout()
+        self.gain_boxes = {}
+        self.gain_for = None
+        form.addRow("Receiver gain:", self.gain_row)
+        self.sdr.currentIndexChanged.connect(self._fill_gains)
+        self._fill_gains()
         self.sdr.currentIndexChanged.connect(self._fill_rates)
         self._fill_rates()
         self.fft = QComboBox()
@@ -815,6 +821,17 @@ class Settings(QDialog):
         row.addWidget(self.med_m)
         row.addStretch(1)
         form.addRow("Median filter:", row)
+        self.plot_smooth = QCheckBox("Smooth the calibrated plot")
+        self.plot_smooth.setChecked(bool(hl.get("plot_smooth", True)))
+        self.plot_smooth.setToolTip("Only changes how the line is drawn. "
+                                    "The measured peak stays the same.")
+        form.addRow("", self.plot_smooth)
+        self.blank = QCheckBox("Ignore pulsed interference in hydrogen line only mode")
+        self.blank.setChecked(bool(hl.get("blank_pulses", False)))
+        self.blank.setToolTip("For a strong pulsed signal at your site: scans use only the "
+                              "gaps between pulses. Lower the gain as well, at full gain "
+                              "the line can be lost.")
+        form.addRow("", self.blank)
         sv = cfg.get("save") or {}
         self.s_csv = QCheckBox("Hit and scan tables (CSV)")
         self.s_csv.setChecked(sv.get("csv", True))
@@ -871,6 +888,40 @@ class Settings(QDialog):
         name = self.sdr.currentData()
         return sdr.SOURCES.get(name) or sdr.SOURCES[(sdr.detect() or ["airspy"])[0]]
 
+    def _fill_gains(self):
+        """One box per gain stage of the chosen receiver, opening at the saved values."""
+        cls = self._sdr_class()
+        if cls is self.gain_for:
+            return
+        self.gain_for = cls
+        while self.gain_row.count():
+            w = self.gain_row.takeAt(0).widget()
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+        now = cls.gains_from(self.cfg["advanced"].get("gain", "preset"))
+        self.gain_boxes = {}
+        for key, label, low, high, step in cls.gain_controls:
+            box = QDoubleSpinBox()
+            box.setDecimals(1 if step < 1 else 0)
+            box.setRange(low, high)
+            box.setSingleStep(step)
+            box.setValue(now[key])
+            box.setToolTip("Highest is the default. Lower it if a strong signal overdrives "
+                           "the receiver. Takes effect when observing is next started, "
+                           "and a calibration must be taken again.")
+            self.gain_row.addWidget(QLabel(label))
+            self.gain_row.addWidget(box)
+            self.gain_boxes[key] = box
+        self.gain_row.addStretch(1)
+
+    def _gain_values(self):
+        """What goes in the config: 'preset' while every stage is at the default."""
+        cls = self.gain_for
+        vals = {k: (b.value() if b.decimals() else int(b.value()))
+                for k, b in self.gain_boxes.items()}
+        return "preset" if vals == cls.preset else dict(vals, **{"for": cls.name})
+
     def _fill_rates(self):
         cls = self._sdr_class()
         cur = int(self.cfg.get("sample_rate") or 0)
@@ -921,7 +972,9 @@ class Settings(QDialog):
         c["app"] = dict(c.get("app") or {}, observe_on_open=self.auto_obs.isChecked(),
                         narrowband=self.narrow.isChecked())
         c["hline"] = dict(c.get("hline") or {}, n=self.med_n.value(), m=self.med_m.value(),
-                         freq_switch=self.fs.isChecked())
+                         freq_switch=self.fs.isChecked(),
+                         plot_smooth=self.plot_smooth.isChecked(),
+                         blank_pulses=self.blank.isChecked())
         c["_autostart"] = self.auto_login.isChecked()
         c["center_mhz"] = self.freq.value()
         c["sample_rate"] = int(self.rate.currentData() or 0)
@@ -929,6 +982,7 @@ class Settings(QDialog):
         c["advanced"]["api_token"] = self.token.text().strip()
         c["advanced"]["api_bind"] = "0.0.0.0" if self.share.isChecked() else "127.0.0.1"
         c["advanced"]["bias_tee"] = self.bias.isChecked()
+        c["advanced"]["gain"] = self._gain_values()
         c["dish"].update({"rotator": self.rot.text().strip(),
                           "az": self.az.value(), "el": self.el.value(),
                           "diameter_m": self.dia.value()})
@@ -1320,7 +1374,14 @@ class Main(QMainWindow):
         outer.setSizes([600, 220])
         outer.setStretchFactor(0, 3)
         outer.setStretchFactor(1, 1)
-        self.sv_tab = tabs.addTab(outer, "Narrowband search")
+        self.sv_note = QLabel(self.LINE_ONLY)
+        self.sv_note.setVisible(False)
+        svw = QWidget()
+        svl = QVBoxLayout(svw)
+        svl.setContentsMargins(0, 0, 0, 0)
+        svl.addWidget(self.sv_note)
+        svl.addWidget(outer, 1)
+        self.sv_tab = tabs.addTab(svw, "Narrowband search")
 
         # Hydrogen line
         w = QSplitter(Qt.Vertical)
@@ -1388,7 +1449,12 @@ class Main(QMainWindow):
 
         # Candidates
         w = QWidget()
-        lay = QHBoxLayout(w)
+        cv = QVBoxLayout(w)
+        self.c_note = QLabel(self.LINE_ONLY)
+        self.c_note.setVisible(False)
+        cv.addWidget(self.c_note)
+        lay = QHBoxLayout()
+        cv.addLayout(lay, 1)
         self.c_table = QTableView()
         self.c_model = QStandardItemModel()
         self.c_table.setModel(self.c_model)
@@ -1452,6 +1518,7 @@ class Main(QMainWindow):
         row.addWidget(btn)
         return lb, btn, row
 
+    LINE_ONLY = "This node is observing the hydrogen line only."
     LIVE_CSS = ("QLabel { background: #2e9e4f; color: white; font-weight: bold; "
                 "padding: 3px 8px; border-radius: 4px; }")
     NOTLIVE_CSS = ("QLabel { background: #d9822b; color: white; font-weight: bold; "
@@ -1573,6 +1640,8 @@ class Main(QMainWindow):
         # our own child observes the local node only; a remote node is judged by its status
         running = (not n.remote and self.proc is not None
                    and self.proc.state() != QProcess.NotRunning)
+        self.sv_note.setVisible(s.get("mode") == "hline")
+        self.c_note.setVisible(s.get("mode") == "hline")
         if s.get("mode") == "hline":
             # a node with the line alone has nothing on the search tabs: open on its data,
             # once per node, so the tabs can still be clicked
@@ -1844,7 +1913,7 @@ class Main(QMainWindow):
             when = stamp(sel, r[1] if r and len(r) > 1 else "")
             extra = ""
             if r and len(r) > 5 and r[3] != "":
-                extra = f"   {r[3]} candidate(s), {r[4]} carrier(s), top SNR {r[5]}"
+                extra = f"   {r[3]} hit(s), {r[4]} carrier(s), top SNR {r[5]}"
             self._set_live(self.sv_banner, self.sv_live, False, f"block {when}{extra}")
         else:
             self.sv_stack.setCurrentIndex(0)
@@ -1858,7 +1927,7 @@ class Main(QMainWindow):
                 r = r + [""] * (7 - len(r))
                 out.append([r[1] or stamp(r[0]), r[0], r[3], r[4], r[5]])
             self._fill_scan_table(self.sv_table, self.sv_model,
-                                  ["Time", "Block (UTC)", "Candidates", "Carriers", "Top SNR"], out)
+                                  ["Time", "Block (UTC)", "Hits", "Carriers", "Top SNR"], out)
 
     def _refresh_cands(self, cands):
         head, rows = cands

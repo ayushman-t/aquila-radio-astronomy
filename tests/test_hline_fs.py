@@ -81,7 +81,7 @@ def test_fs_scan_end_to_end(tmp_path, monkeypatch):
     off = (np.arange(chans) - chans / 2.0) * src.rate / chans
     band = 1 + 0.5 * (off / src.rate) ** 2
 
-    def fake_observe(s, dat, obs, log=print, fine=0):
+    def fake_observe(s, dat, obs, log=print, fine=0, **_):
         tuned.append(s.center_hz)
         n = int(obs["duration"] / obs["t_sample"])
         rows = band * _sky(s.center_hz + off, 0.05, 0.0, 0.0) * (
@@ -172,3 +172,101 @@ def test_switching_off_uses_plain_scans(tmp_path, monkeypatch):
     node.status("capturing")
     st = json.load(open(tmp_path / "s" / "status.json"))
     assert st["calibration"] == "none"
+
+
+class _PulsedRadio:
+    """Noise, with an optional burst 100 times stronger in a 5 ms frame, on for 3.7 ms."""
+    rate = 5_000_000
+
+    def __init__(self, pulsed, seed=1):
+        self.pulsed, self.rng, self.t = pulsed, np.random.default_rng(seed), 0
+
+    def start(self, nsamples, frame):
+        pass
+
+    def frames(self, n):
+        while True:
+            z = self.rng.standard_normal(n) + 1j * self.rng.standard_normal(n)
+            if self.pulsed:
+                on = ((self.t + np.arange(n)) % 25000) < 18500
+                z = z * np.where(on, 10.0, 1.0)
+            self.t += n
+            yield z
+
+    def to_complex(self, z):
+        return z
+
+    def finish(self):
+        return ""
+
+
+def _row_level(tmp_path, pulsed, blank):
+    obs = {"channels": 1024, "duration": 2, "t_sample": 1.0, "bandwidth": 5_000_000}
+    dat = str(tmp_path / "x.dat")
+    kept = []
+    assert hline.observe(_PulsedRadio(pulsed), dat, obs, blank=blank, kept=kept)
+    return float(np.median(np.fromfile(dat, dtype=np.float32))), kept
+
+
+def test_blanking_recovers_the_quiet_level(tmp_path):
+    clean, kept = _row_level(tmp_path, False, True)
+    assert min(kept) > 0.99                         # no pulses: nothing is thrown away
+    gated, kept = _row_level(tmp_path, True, True)
+    assert 0.15 < np.median(kept) < 0.27            # the gaps, less the frames on their edges
+    assert abs(10 * np.log10(gated / clean)) < 0.1  # back at the true sky level
+    plain, _ = _row_level(tmp_path, True, False)
+    assert 10 * np.log10(plain / clean) > 15
+
+
+def test_blanking_keeps_the_scan_going_when_every_frame_is_loud(tmp_path):
+    frames = np.ones((100, 64), complex) * np.linspace(1, 3, 100)[:, None]
+    assert hline.quiet_frames(frames).sum() >= 5
+
+
+def test_plot_smoothing_changes_only_the_drawing(tmp_path, monkeypatch):
+    plt = pytest.importorskip("matplotlib.pyplot")
+    v = np.linspace(200, -300, 500)
+    spec = np.exp(-0.5 * (v / 10.0) ** 2) + 0.02 * np.random.default_rng(0).standard_normal(500)
+    m = {"v": v, "spec_db": spec.copy(), "db": float(spec.max()), "kms": 0.0, "rms_db": 0.02}
+    drawn = []
+    real = plt.Axes.plot
+
+    def spy(self, x, y, *a, **k):
+        drawn.append(np.array(y))
+        return real(self, x, y, *a, **k)
+    monkeypatch.setattr(plt.Axes, "plot", spy)
+    hline.plot_db(m, str(tmp_path / "off.png"))
+    hline.plot_db(m, str(tmp_path / "on.png"), smooth_kms=2.0)
+    assert (tmp_path / "on.png").stat().st_size > 0
+    off, on = drawn[0], drawn[2]
+    assert np.array_equal(off, spec)
+    flat = v < -100                                 # away from the line, only noise moves
+    assert np.std(np.diff(on[flat])) < 0.3 * np.std(np.diff(off[flat]))
+    assert np.array_equal(m["spec_db"], spec)      # the measurement is untouched
+    assert drawn[3][0] == m["db"]                  # the marked peak stays as measured
+
+
+@pytest.mark.parametrize("rate", [2_400_000, 3_000_000, 5_000_000, 6_000_000, 10_000_000])
+def test_reference_band_stays_clear_of_the_gas(rate):
+    f_sig, f_ref = hline.fs_tunings(hline.DEFAULTS, rate)
+    lowest_seen = f_ref - min(0.344 * rate, 1.6e6)
+    # 150 km/s of gas on the receding-negative side stays out of the reference
+    assert lowest_seen > F0 * (1 + 150.0 / 299792.458)
+
+
+def test_one_sided_baseline_is_not_used(tmp_path):
+    files, obs = _scan(tmp_path, 5_000_000)
+    h = dict(hline.DEFAULTS, line_window_kms=900)
+    wide = hline.measure_fs(files["sig"], files["ref"], obs, h)
+    assert wide is None or wide["line_kms"][0] < 400
+
+
+def test_quiet_rows_drops_a_raised_floor_only():
+    from aquila import hline
+    rng = np.random.default_rng(3)
+    rows = 1 + 0.001 * rng.normal(size=(145, 64))
+    assert hline.quiet_rows(rows).sum() == 145
+    rows[20:50] *= 1.6
+    keep = hline.quiet_rows(rows)
+    assert not keep[20:50].any() and keep[50:].all()
+    assert hline.quiet_rows(1.6 * rows[:5]).all()

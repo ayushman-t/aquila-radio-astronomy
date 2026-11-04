@@ -146,6 +146,18 @@ class Source:
     default_rate = 2_500_000
     rates = ()
     preset = {}
+    gain_controls = ()      # (key, label, lowest, highest, step), shown in Settings
+
+    @classmethod
+    def gains_from(cls, wanted):
+        """The gains to use: the preset, with any saved values this receiver has, kept in
+        its range. A saved set can belong to another receiver with other stages."""
+        out = dict(cls.preset)
+        if isinstance(wanted, dict) and wanted.get("for", cls.name) == cls.name:
+            for key, _, low, high, _ in cls.gain_controls:
+                if isinstance(wanted.get(key), (int, float)):
+                    out[key] = min(max(wanted[key], low), high)
+        return out
 
     def __init__(self, cfg):
         self.cfg = cfg
@@ -154,8 +166,7 @@ class Source:
         self.rate = int(cfg["sample_rate"] or self.default_rate)
         self.center_hz = int(round(cfg["center_mhz"] * 1e6))
         self.bias = bool(adv.get("bias_tee", True))
-        g = adv.get("gain", "preset")
-        self.gain = dict(self.preset) if g == "preset" else dict(g)
+        self.gain = self.gains_from(adv.get("gain", "preset"))
 
     @classmethod
     def available(cls):
@@ -275,6 +286,8 @@ class Airspy(Source):
     default_rate = 3_000_000
     rates = (2_500_000, 3_000_000, 6_000_000, 10_000_000)
     preset = {"lna": 14, "mixer": 15, "vga": 15}   # maximum, LNA range is 0-14
+    gain_controls = (("lna", "LNA", 0, 14, 1), ("mixer", "Mixer", 0, 15, 1),
+                     ("vga", "VGA", 0, 15, 1))
 
     def command(self, nsamples):
         g = self.gain
@@ -327,6 +340,7 @@ class RtlSdr(Source):
     default_rate = 2_400_000
     rates = (1_024_000, 2_048_000, 2_400_000, 2_560_000, 3_200_000)
     preset = {"gain": 49.6}   # maximum tuner gain, dB
+    gain_controls = (("gain", "Gain dB", 0, 49.6, 0.1),)
 
     def command(self, nsamples):
         biast = which("rtl_biast")
@@ -352,6 +366,7 @@ class HackRF(Source):
     default_rate = 5_000_000
     rates = (2_000_000, 4_000_000, 5_000_000, 8_000_000, 10_000_000, 20_000_000)
     preset = {"amp": 1, "lna": 40, "vga": 62}   # maximum
+    gain_controls = (("amp", "Amp", 0, 1, 1), ("lna", "LNA", 0, 40, 8), ("vga", "VGA", 0, 62, 2))
 
     def command(self, nsamples):
         g = self.gain

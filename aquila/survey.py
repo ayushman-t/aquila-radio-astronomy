@@ -21,6 +21,8 @@ from .plot import decimate, save_waterfall
 from .spur import SpurMask
 from .store import Store, replace
 
+NO_RECEIVER = "waiting for the receiver"
+
 
 def ntp_synced():
     """On a systemd box the answer must come from timedatectl; any failure means "not
@@ -103,7 +105,7 @@ class Survey:
         nch = int(adv["n_chan"])
         t0 = time.time()
         self.cfg["dish"] = config.pointing(self.cfg)["dish"]
-        self.status("capturing")
+        self.status(NO_RECEIVER if getattr(self, "_fails", 0) >= 3 else "capturing")
         save = self.cfg.get("save") or {}
         raw = None
         wf = None
@@ -248,7 +250,7 @@ class Survey:
         if hits:
             top = max(h["snr"] for h in hits)
             flood = "  [flood, snippets skipped]" if len(cands) > adv["flood_hits"] else ""
-            log(f"{len(cands)} candidate(s) + {len(carriers)} carrier(s), top SNR {top:.0f}{flood}")
+            log(f"{len(cands)} hit(s) + {len(carriers)} carrier(s), top SNR {top:.0f}{flood}")
 
         self.last = {"utc": utc, "hits": hits, "raw_mean": raw_mean, "chan_bw": chan_bw,
                      "row_s": row_s}
@@ -359,6 +361,7 @@ class Survey:
                 ok = False
             done += ok
             fails = 0 if ok else fails + 1
+            self._fails = fails
             if ok and self.seti and done % 5 == 0:
                 try:
                     self.curate_async()
