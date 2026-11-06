@@ -1,3 +1,10 @@
+aquila-radio-astronomy (0.2.14) unstable; urgency=medium
+
+  * Windows, macOS and the portable Linux build: the node draws its 3D picture.
+    In 0.2.13 these builds did not know the command for it.
+
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Fri, 06 Nov 2026 20:45:00 +0530
+
 aquila-radio-astronomy (0.2.13) unstable; urgency=medium
 
   * New 3D tab next to Hydrogen line: a multi-day plot of the line against time,

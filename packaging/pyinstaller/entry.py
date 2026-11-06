@@ -8,7 +8,7 @@ import sys
 
 from aquila.cli import main
 
-VERBS = {"run", "hline", "cal", "curate", "status", "setup", "gui"}
+VERBS = {"run", "hline", "cal", "curate", "status", "setup", "gui", "map3d", "serve"}
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
