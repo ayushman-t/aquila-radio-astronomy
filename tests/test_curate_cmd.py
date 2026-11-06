@@ -15,7 +15,7 @@ def _cfg(tmp_path):
 def test_frozen_build_uses_the_curate_verb(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     cfg = _cfg(tmp_path)
-    cmd = survey.curate_cmd(cfg, 1420e6)
+    cmd = survey.curate_cmd(cfg, 1420e6, 3e6)
     assert cmd == [sys.executable, "-c", cfg["_path"], "curate"]
     assert "import" not in " ".join(cmd)
 
@@ -23,7 +23,7 @@ def test_frozen_build_uses_the_curate_verb(tmp_path, monkeypatch):
 def test_source_install_runs_curate_directly(tmp_path, monkeypatch):
     monkeypatch.delattr(sys, "frozen", raising=False)
     cfg = _cfg(tmp_path)
-    cmd = survey.curate_cmd(cfg, 1420e6)
+    cmd = survey.curate_cmd(cfg, 1420e6, 3e6)
     assert cmd[:2] == [sys.executable, "-c"]
     assert cmd[3] == cfg["state_dir"]
     args = json.loads(cmd[4])

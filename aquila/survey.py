@@ -13,9 +13,9 @@ import time
 
 import numpy as np
 
-from . import api, config, dsp, sdr
+from . import api, config, curate, dsp, sdr
 from .config import MIN_SETI_CHANNELS
-from .hline import HLine
+from .hline import HLine, fs_search_blocks, fs_tunings
 from .lock import acquire_lock, release_lock, watch_stop
 from .plot import decimate, save_waterfall
 from .spur import SpurMask
@@ -46,6 +46,13 @@ class Survey:
         self.store = Store(cfg["state_dir"])
         self.running = True
         self.start_ts = time.time()
+        self.hline = HLine(cfg, source=self.src, log=self.store.log)
+        self.hline.own_status = False
+        self.fs_blocks = self.hline.fs_search = fs_search_blocks(cfg, self.src.rate)
+        self.since_ref = 0
+        if self.fs_blocks:
+            self.f_sig, self.f_ref = fs_tunings(self.hline.h, self.src.rate)
+            self.src.center_hz = self.f_sig
         tuning = {"n_chan": int(self.adv["n_chan"]), "rate": int(self.src.rate),
                   "center_hz": int(self.src.center_hz), "sdr": self.src.name}
         self.spur = SpurMask(int(self.adv["spur_bin_ch"]), int(self.adv["spur_min_sightings"]),
@@ -54,8 +61,6 @@ class Survey:
         self.tot.update(self.store.read_json(self.store.totals, {}))
         self.last = {}
         self.api = None
-        self.hline = HLine(cfg, source=self.src, log=self.store.log)
-        self.hline.own_status = False
 
     def start_api(self):
         try:
@@ -87,6 +92,7 @@ class Survey:
              "n_chan": int(self.adv["n_chan"]),
              "chan_bw_hz": round(self.src.rate / int(self.adv["n_chan"]), 3),
              "dwell_s": self.adv["dwell_s"],
+             **({"calibration": "frequency switching"} if self.fs_blocks else {}),
              "dish": {k: v for k, v in self.cfg["dish"].items() if k != "rotator"},
              "site": self.cfg.get("site"),
              "blocks": self.tot["blocks"], "obs_s": round(self.tot["obs_s"]),
@@ -271,6 +277,23 @@ class Survey:
                     last_carriers=len(carriers))
         return True
 
+    def reference_block(self):
+        """One block retuned off the line for the frequency switched scan. Not searched: it
+        would watch other frequencies only one block in four, too few to judge a track."""
+        adv = self.adv
+        self.status("capturing")
+        self.src.center_hz = self.f_ref
+        try:
+            wf, _, row_s = dsp.channelize(self.src, int(adv["n_chan"]), int(adv["rows"]),
+                                          float(adv["dwell_s"]), float(adv["settle_skip_s"]),
+                                          self.store.log)
+        finally:
+            self.src.center_hz = self.f_sig
+        if wf is None:
+            self.hline.fs_rows = []
+            return False
+        return self.hline.record_reference(wf, row_s, self.f_sig, self.f_ref)
+
     def curate_async(self):
         """Tier the hits in a separate low-priority process. A flooded day can take
         minutes on a Pi; capture must never wait for it. Skipped while one is running."""
@@ -286,7 +309,7 @@ class Survey:
                     lines = open(err).read().strip().splitlines()
                     tail = lines[-1] if lines else "killed, no message (out of memory?)"
                 self.store.log(f"curate failed ({rc}): {tail}")
-        cmd = curate_cmd(self.cfg, self.src.center_hz)
+        cmd = curate_cmd(self.cfg, self.src.center_hz, self.src.rate)
         kw = {"stdout": subprocess.DEVNULL}
         if sys.platform == "win32":
             kw["creationflags"] = 0x00004000 | subprocess.CREATE_NO_WINDOW   # below normal priority
@@ -343,7 +366,7 @@ class Survey:
                         break
                     time.sleep(1)
                 continue
-            if self.hline.cal_requested():
+            if self.hline.cal_requested() and not self.fs_blocks:
                 # asked for over the API (or by the local app): one reference scan, then
                 # straight back to observing. No restart, nothing else changes.
                 self.status("calibrating", cal_s=int(self.hline.h["duration_s"]))
@@ -354,15 +377,20 @@ class Survey:
                 if self.stop_requested():
                     self.running = False
                 continue
+            ref_due = self.fs_blocks and self.since_ref >= self.fs_blocks
             try:
-                ok = self.one_block()
+                ok = self.reference_block() if ref_due else self.one_block()
             except Exception as e:
                 log(f"block error: {e}")
                 ok = False
-            done += ok
+            if ref_due:
+                self.since_ref = 0
+            elif ok:
+                self.since_ref += 1
+                done += 1
             fails = 0 if ok else fails + 1
             self._fails = fails
-            if ok and self.seti and done % 5 == 0:
+            if ok and not ref_due and self.seti and done % 5 == 0:
                 try:
                     self.curate_async()
                 except Exception as e:              # tiering is extra; observing goes on
@@ -392,7 +420,7 @@ class Survey:
         release_lock(self.lock)
 
 
-def curate_cmd(cfg, center_hz):
+def curate_cmd(cfg, center_hz, rate):
     """The command line that tiers the hits in a child process.
 
     A frozen app (PyInstaller) is its own interpreter and takes a verb, so it runs its
@@ -408,6 +436,7 @@ def curate_cmd(cfg, center_hz):
     adv = cfg["advanced"]
     args = {"beam_deg": beam_deg(cfg["dish"].get("diameter_m"), center_hz),
             "center_hz": center_hz,
+            "track_min_blk": curate.track_blocks(cfg, rate),
             "exclude_if_khz": adv.get("exclude_if_khz") or [],
             "snr_thresh": float(adv["snr_thresh"]),
             "comb_window": adv.get("comb_period_hz") or [10000, 100000]}

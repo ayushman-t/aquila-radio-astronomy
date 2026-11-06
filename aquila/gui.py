@@ -52,6 +52,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSpinBox,
     QSplitter,
+    QStackedLayout,
     QStackedWidget,
     QStyle,
     QStyledItemDelegate,
@@ -127,7 +128,11 @@ class Poller(QThread):
         jobs = {"hl_cal": (lambda: n.get("hline/latest.png", st)) if hl is None or hl.get("latest")
                 else (lambda: None),
                 "hl_raw": (lambda: n.get("hline/latest_raw.png", st))
-                if hl is None or hl.get("latest_raw") else (lambda: None)}
+                if hl is None or hl.get("latest_raw") else (lambda: None),
+                "map3d": (lambda: n.get("hline/map3d.png", st))
+                if hl is None or hl.get("map3d") else (lambda: None),
+                "hist": (lambda: n.history())
+                if hl is None or hl.get("map3d") else (lambda: None)}
         if self.want_scan:
             f = self.want_scan
             jobs["sel_cal"] = lambda: n.get(f"hline/{f}.png", st)
@@ -230,6 +235,46 @@ class Node:
         self.base = base
         self.token = token or ""
         self.remote = base.startswith("http")
+
+    def history(self, days=7):
+        """The multi-day plot rows, for the plot the user can turn. A remote node sends
+        only the scans newer than the last one held, checked at most once a minute.
+        None when the node has none, or its software is too old to send them."""
+        from . import map3d
+        try:
+            if not self.remote:
+                p = os.path.join(self.base, "hline", map3d.HISTORY)
+                key = (os.path.getmtime(p), os.path.getsize(p)) if os.path.exists(p) else None
+                if key != getattr(self, "_hist_key", None):
+                    self._hist_key = key
+                    self._hist = map3d.load(os.path.join(self.base, "hline")) if key else None
+                return self._hist
+            held = getattr(self, "_hist", None)
+            if time.time() - getattr(self, "_hist_at", 0) < 60:
+                return held
+            self._hist_at = time.time()
+            after = (float(held["t"].max()) if held is not None and held.size
+                     else time.time() - days * 86400.0)
+            req = urllib.request.Request(f"{self.base}/hline/history.dat?after={after:.3f}")
+            with urllib.request.urlopen(req, timeout=10) as r:
+                if r.headers.get("X-Aquila-After") != "1":
+                    return None             # an older node: it would send the whole file
+                b = r.read()
+            new = np.frombuffer(b[:len(b) // map3d.ROW.itemsize * map3d.ROW.itemsize],
+                                map3d.ROW).copy()
+            # the time went out rounded to a millisecond: never take a row twice
+            new = new[new["t"] > after]
+            rows = new if held is None else np.concatenate([held, new])
+            rows = rows[rows["t"] >= time.time() - days * 86400.0 - 3600]
+            self._hist = rows
+            return rows
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                self.over_budget = True
+                return getattr(self, "_hist", None)
+            return None
+        except Exception:
+            return getattr(self, "_hist", None)
 
     def request_cal(self):
         """Ask a remote node for a calibration. Returns (ok, message)."""
@@ -524,6 +569,101 @@ class ImagePane(QLabel):
             self.setPixmap(pm)
 
 
+class Map3DPane(QWidget):
+    """The multi-day plot, drawn here so the user can turn it with the mouse. Until the
+    node sends its rows (or when the plotting backend is missing) it shows the picture
+    the node drew instead."""
+    HINT = "Drag to turn, right drag to zoom, double click to reset"
+
+    def __init__(self, text):
+        super().__init__()
+        self.image = ImagePane(text)
+        self._stack = QStackedLayout(self)
+        self._stack.addWidget(self.image)
+        self.canvas = self.fig = self.ax = None
+        self._rows = self._key = None
+        self._title = ""
+        self._drawn = None
+        try:
+            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+            from matplotlib.figure import Figure
+            self.fig = Figure(figsize=(15, 6.5), dpi=100)
+            self.canvas = FigureCanvasQTAgg(self.fig)
+            self.canvas.setToolTip(self.HINT)
+            self.canvas.mpl_connect("button_release_event", self._released)
+            self.canvas.mpl_connect("button_press_event", self._pressed)
+            self._stack.addWidget(self.canvas)
+        except Exception:
+            self.canvas = None
+
+    # the image pane's interface, so the window treats both panes alike
+    def set_data(self, data):
+        self.image.set_data(data)
+        if data is None:
+            self._rows = self._key = self._drawn = None
+            self._stack.setCurrentWidget(self.image)
+
+    def setText(self, text):
+        self.image.setText(text)
+
+    def text(self):
+        return self.image.text()
+
+    @property
+    def _placeholder(self):
+        return self.image._placeholder
+
+    def set_rows(self, rows, title=""):
+        if self.canvas is None or rows is None or not rows.size:
+            return
+        key = (int(rows.size), float(rows["t"].max()), title)
+        if key == self._key:
+            return
+        self._rows, self._key, self._title = rows, key, title
+        if self.isVisible():
+            self._draw()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        if self._rows is not None and self._drawn != self._key:
+            self._draw()
+
+    def _draw(self):
+        from . import map3d
+        view = (self.ax.elev, self.ax.azim) if self.ax is not None else None
+        try:
+            ax = map3d.draw(self.fig, self._rows, self._title, light=True)
+        except Exception:
+            ax = None
+        if ax is None:
+            self.ax = None
+            self._stack.setCurrentWidget(self.image)
+            return
+        self.ax = ax
+        if view is not None:
+            ax.view_init(elev=view[0], azim=view[1])
+            map3d.lay(ax)
+        self.ax.text2D(0.0, 0.0, self.HINT, transform=self.ax.transAxes, fontsize=8,
+                       color="0.45")
+        self._drawn = self._key
+        self._stack.setCurrentWidget(self.canvas)
+        self.canvas.draw_idle()
+
+    def _pressed(self, e):
+        if e.dblclick and self.ax is not None and e.inaxes is self.ax:
+            from . import map3d
+            self.ax.view_init(elev=32, azim=-60)
+            map3d.lay(self.ax)
+            self.canvas.draw_idle()
+
+    def _released(self, e):
+        # turning keeps the order the surface was laid in for the old view: lay it again
+        if self.ax is not None and e.inaxes is self.ax:
+            from . import map3d
+            map3d.lay(self.ax)
+            self.canvas.draw_idle()
+
+
 class SkyMap(QWidget):
     """Equatorial map, RA increasing to the left like the sky. Galactic plane band,
     the beam to scale, its drift track, and the pointing numbers underneath."""
@@ -795,7 +935,7 @@ class Settings(QDialog):
         snote.setStyleSheet("color: gray")
         form.addRow(snote)
         hl = cfg.get("hline") or {}
-        self.fs = QCheckBox("Frequency switching in hydrogen line only mode")
+        self.fs = QCheckBox("Frequency switching")
         self.fs.setChecked(bool(hl.get("freq_switch", True)))
         self.fs.setToolTip("On: no calibration needed. Off: scans use a reference taken with "
                            "Calibrate now.")
@@ -1303,7 +1443,8 @@ class Main(QMainWindow):
         self.sp_curve.setData([], [])
         self.wf_plot.setTitle("Waterfall (loading)")
         self.sp_plot.setTitle("Spectrum (loading)")
-        for pane in (self.hl_cal, self.hl_raw, self.sv_block_pane, self.c_thumb):
+        for pane in (self.hl_cal, self.hl_raw, self.map_pane, self.sv_block_pane,
+                     self.c_thumb):
             pane.set_data(None)
             pane.setText("Loading...")
         for m in (self.hl_model, self.sv_model, self.c_model):
@@ -1446,6 +1587,8 @@ class Main(QMainWindow):
         w.setStretchFactor(0, 3)
         w.setStretchFactor(1, 1)
         self.hl_tab = tabs.addTab(w, "Hydrogen line")
+        self.map_pane = Map3DPane(self.MAP_EMPTY)
+        self.map_tab = tabs.addTab(self.map_pane, "3D")
 
         # Candidates
         w = QWidget()
@@ -1495,6 +1638,8 @@ class Main(QMainWindow):
         if not nb and self.tabs.currentIndex() in (self.sv_tab, self.c_tab):
             self.tabs.setCurrentIndex(self.hl_tab)
 
+        if getattr(self, "sb", None) is not None:
+            return                    # called again after Settings: the bar is built once
         self.sb = self.statusBar()
         self.sb_label = QLabel("")
         self.sb.addPermanentWidget(self.sb_label)
@@ -1518,6 +1663,7 @@ class Main(QMainWindow):
         row.addWidget(btn)
         return lb, btn, row
 
+    MAP_EMPTY = "The plot builds up as calibrated scans come in."
     LINE_ONLY = "This node is observing the hydrogen line only."
     LIVE_CSS = ("QLabel { background: #2e9e4f; color: white; font-weight: bold; "
                 "padding: 3px 8px; border-radius: 4px; }")
@@ -1629,7 +1775,8 @@ class Main(QMainWindow):
             if self.wf_plot.plotItem.titleLabel.text == "Waterfall (loading)":
                 self.wf_plot.setTitle(f"Waterfall ({why})")
                 self.sp_plot.setTitle(f"Spectrum ({why})")
-                for pane in (self.hl_cal, self.hl_raw, self.sv_block_pane, self.c_thumb):
+                for pane in (self.hl_cal, self.hl_raw, self.map_pane, self.sv_block_pane,
+                     self.c_thumb):
                     if pane.text() == "Loading...":
                         pane.setText(f"Node {why}.")
             return
@@ -1696,7 +1843,12 @@ class Main(QMainWindow):
         self.a_hline.setEnabled(not running and not n.remote and not held)
         self.a_cal.setEnabled(not running and not n.remote and not held)
         has_cal = bool((idx.get("hline") or {}).get("cal"))
-        if s.get("mode") == "hline" and s.get("calibration") == "frequency switching":
+        # a search that frequency switches takes no stored reference: it would be taken at
+        # the wrong tuning for the day the switching is turned off
+        self._fs_search = (raw_state not in ("not running", "stopped")
+                           and s.get("calibration") == "frequency switching"
+                           and s.get("mode") != "hline")
+        if s.get("calibration") == "frequency switching":
             self._set_cal_mode("frequency switching")
         else:
             self._set_cal_mode("receiver" if has_cal else "none")
@@ -1815,6 +1967,8 @@ class Main(QMainWindow):
                                     "No calibrated plot yet. Take a receiver calibration first.")
         self.hl_cal.set_data(cal)
         self.hl_raw.set_data(raw)
+        self.map_pane.set_data(d.get("map3d"))
+        self.map_pane.set_rows(d.get("hist"), self.node().name)
         if sel and "sel_raw" in d:
             self._set_live(self.hl_banner, self.hl_live, False,
                            f"scan {when}{self._hdr_summary(d.get('sel_hdr'))}")
@@ -2103,16 +2257,17 @@ class Main(QMainWindow):
         "frequency switching": (
             "Calibration: frequency switching",
             "Calibration: frequency switching (automatic)\n\n"
-            "Every 30 seconds the radio switches between two tunings: one with the hydrogen "
-            "line in the band, and one 2 to 3 MHz higher, where there is no hydrogen.\n\n"
+            "The radio switches between two tunings: one with the hydrogen line in the "
+            "band, and one 2 to 3 MHz higher, where there is no hydrogen.\n\n"
             "The receiver's own band shape, its spurs and the spike in the middle of the band "
             "are the same in both, so dividing one by the other cancels them, channel by "
             "channel. What is left is the sky: the line on top of a nearly flat background. "
-            "A straight line fitted outside +-120 km/s takes out the rest, and the plot shows "
-            "the line in dB above it.\n\n"
+            "A straight line fitted well away from the line takes out the rest, and the plot "
+            "shows the line in dB above it.\n\n"
             "Nothing to set up and nothing to point at. The reference is measured again every "
-            "minute, so slow drift of the receiver cancels too. It can be switched off in "
-            "Settings."),
+            "few minutes, so slow drift of the receiver cancels too. With the narrowband "
+            "search on, every fourth block is the reference and is not searched. It can be "
+            "switched off in Settings."),
         "receiver": (
             "Calibration: receiver reference",
             "Calibration: receiver reference\n\n"
@@ -2120,15 +2275,15 @@ class Main(QMainWindow):
             "the LNA input or with the dish on cold sky. That removes the receiver's band "
             "shape. A straight baseline takes out the rest, and the plot shows the line in dB "
             "above it.\n\n"
-            "Take a new reference when the receiver, its gains or its sample rate change. In "
-            "hydrogen line only mode none is needed: frequency switching is used instead."),
+            "Take a new reference when the receiver, its gains or its sample rate change. "
+            "With frequency switching on in Settings none is needed."),
         "none": (
             "Calibration: none",
             "Calibration: none yet\n\n"
             "Scans show the raw receiver output, with its band shape still in. Use Calibrate "
             "now with a 50 ohm terminator on the LNA input or the dish on cold sky.\n\n"
-            "In hydrogen line only mode no calibration is needed: the app calibrates itself "
-            "by frequency switching."),
+            "With frequency switching on in Settings no calibration is needed: the app "
+            "calibrates itself."),
     }
 
     def _cal_text(self):
@@ -2152,6 +2307,12 @@ class Main(QMainWindow):
 
     def take_cal(self):
         n = self.node()
+        if getattr(self, "_fs_search", False):
+            QMessageBox.information(
+                self, "Calibration", "This node uses frequency switching, so no calibration "
+                "is needed. To use a stored reference instead, switch frequency switching "
+                "off in Settings.")
+            return
         if n.remote:
             return self._take_cal_remote(n)
         running = self.proc is not None and self.proc.state() != QProcess.NotRunning

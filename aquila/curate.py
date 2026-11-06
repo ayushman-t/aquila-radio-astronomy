@@ -238,9 +238,15 @@ def track_envelope(rows, t0, snr_thresh):
 
 
 # ---------------------------------------------------------------- the curator
+def track_blocks(cfg, rate):
+    """Blocks a track needs. A reference block every fourth leaves about 5 in a crossing."""
+    from .hline import fs_search_blocks
+    return 5 if fs_search_blocks(cfg, rate) else TRACK_MIN_BLK
+
+
 def curate(rows, center_hz=1420e6, exclude_if_khz=(), snr_thresh=25.0,
            persist_max_s=PERSIST_MAX_SPAN_S, comb_window=(10e3, 100e3),
-           history_path=None, now=None):
+           history_path=None, now=None, track_min_blk=TRACK_MIN_BLK):
     now = time.time() if now is None else now
     empty = {"A": [], "B": [], "C": [], "rfi": 0, "rfi_persist": 0, "rfi_comb": 0,
              "rfi_edge": 0, "oncomb_review": []}
@@ -281,7 +287,7 @@ def curate(rows, center_hz=1420e6, exclude_if_khz=(), snr_thresh=25.0,
             near[j] += n
     for k in sorted(near):
         D = round(k * CROSS_DRIFT_STEP, 4)
-        if near[k] < TRACK_MIN_BLK or abs(D) <= CROSS_DRIFT_MAX:
+        if near[k] < track_min_blk or abs(D) <= CROSS_DRIFT_MAX:
             continue
         lo = bisect.bisect_left(drifts, D - FAST_POOL_HZ_S)
         hi = bisect.bisect_right(drifts, D + FAST_POOL_HZ_S)
@@ -292,7 +298,7 @@ def curate(rows, center_hz=1420e6, exclude_if_khz=(), snr_thresh=25.0,
             cells[round((r["freq"] - D * (block_time(r["utc"]) - t0)) / TRACK_BIN_HZ)].append(r)
         for members in cells.values():
             sz = max_run(sorted({block_time(m["utc"]) for m in members}))
-            if sz >= TRACK_MIN_BLK:
+            if sz >= track_min_blk:
                 # neighbouring drifts often hold the same run; the true one holds it tightest
                 off = [m["freq"] - D * (block_time(m["utc"]) - t0) for m in members]
                 key = (sz, -round(max(off) - min(off)), -abs(D))
@@ -403,7 +409,7 @@ def curate(rows, center_hz=1420e6, exclude_if_khz=(), snr_thresh=25.0,
 
 
 def run(state_dir, beam_deg=None, center_hz=1420e6, exclude_if_khz=(), snr_thresh=25.0,
-        comb_window=(10e3, 100e3)):
+        comb_window=(10e3, 100e3), track_min_blk=TRACK_MIN_BLK):
     now = time.time()
     hits = os.path.join(state_dir, "hits.csv")
     cand = os.path.join(state_dir, "candidates.csv")
@@ -411,7 +417,8 @@ def run(state_dir, beam_deg=None, center_hz=1420e6, exclude_if_khz=(), snr_thres
     history = os.path.join(state_dir, "comb_history.csv")
     summ_path = os.path.join(state_dir, "curate_summary.json")
     out, nb, d_lo, comb, stats = curate(load(hits), center_hz, exclude_if_khz, snr_thresh,
-                                        persist_limit(beam_deg), comb_window, history, now)
+                                        persist_limit(beam_deg), comb_window, history, now,
+                                        track_min_blk)
     order = {"A": 0, "B": 1, "C": 2}
 
     def row(r, extra=""):

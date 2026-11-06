@@ -13,7 +13,7 @@ import time
 
 import numpy as np
 
-from . import config, sdr
+from . import config, map3d, sdr
 from .lock import acquire_lock, release_lock, watch_stop
 from .store import Store, replace
 
@@ -32,6 +32,8 @@ DEFAULTS = {
     "keep_scans": 500,
     "day_file": True,    # one 1024-channel row per block appended to h1/h1_<day>_<kHz>k.dat (4 KB)
     "day_keep_days": 30,
+    "map3d": True,       # the multi-day plot: about 1.2 KB per scan, redrawn every 30 minutes
+    "map_days": 7,
     # frequency switching (H-line-only scans): the receiver alternates between two
     # tunings a throw apart, so its own passband cancels channel by channel and no
     # calibration is needed. throw 0 = twice the flat half of the band, so the
@@ -41,6 +43,11 @@ DEFAULTS = {
     "freq_switch": True,
     "fs_phase_s": 30,
     "fs_throw_hz": 0,
+    # search and calibrated line from one receiver: this many search blocks at the signal
+    # tuning, then one reference block, not searched. 0, or freq_switch off: the line in
+    # search mode is divided by a stored calibration. Measured on the 2.4 m: 150 s phases
+    # as flat as 30 s.
+    "fs_search_blocks": 3,
     # frequency switched: baseline fitted outside +-this. Measured on the 0.9 m by retuning:
     # broad structure fixed in sky frequency reaches about -170 km/s, so +-120 fitted part of
     # it as baseline
@@ -278,6 +285,17 @@ def fs_tunings(h, rate):
     return int(round(f_sig)), int(round(f_sig + fs_throw(rate, h.get("fs_throw_hz", 0))))
 
 
+def fs_search_blocks(cfg, rate):
+    """Search blocks between two reference blocks, 0 when the search does not frequency
+    switch: switched off, or a search tuned where its band does not hold the line."""
+    h = {**DEFAULTS, **(cfg.get("hline") or {})}
+    if not h.get("freq_switch", True):
+        return 0
+    if abs(cfg["center_mhz"] * 1e6 - h["f_rest_hz"]) > min(0.344 * rate, 1.6e6):
+        return 0
+    return max(0, int(h.get("fs_search_blocks") or 0))
+
+
 def _flat_band(R, off_hz, bw):
     """Channels inside the passband, read from the reference itself: out from the
     centre until the filter shoulder, where the band is both below its middle and
@@ -435,6 +453,9 @@ class HLine:
         self.start_ts = time.time()
         self.n_scans = 0
         self.own_status = True
+        self.fs_rows = []
+        self.fs_mjd = 0.0
+        self.fs_search = 0          # set by the search when it frequency switches
 
     def stop(self, *_):
         self.running = False
@@ -616,9 +637,14 @@ class HLine:
         obs = obs_parameters(self.cfg, self.src, self.h, chans, row_s, rows * row_s)
         if self.h.get("day_file", True):
             self.day_file(wf_raw, obs, rows * row_s)
+        binned = wf_raw.reshape(rows, chans, nch // chans).mean(axis=2).astype(np.float32)
+        if self.fs_search:
+            if not self.fs_rows:
+                self.fs_mjd = time.time() / 86400.0 + 40587.0 - rows * row_s / 86400.0
+            self.fs_rows.append(binned)
+            return True
         stamp = time.strftime("%Y%m%d_%H%M%S")
         dat = os.path.join(self.dir, f"obs_{stamp}.dat")
-        binned = wf_raw.reshape(rows, chans, nch // chans).mean(axis=2).astype(np.float32)
         binned.tofile(dat + ".tmp")
         replace(dat + ".tmp", dat)
         with open(dat.replace(".dat", ".header"), "w") as f:
@@ -626,6 +652,39 @@ class HLine:
             for k2, v2 in obs.items():
                 f.write(f"{k2}={v2}\n")
         return self.record(dat, obs, stamp, block=True)
+
+    def record_reference(self, wf_raw, row_s, f_sig, f_ref):
+        """The reference block ends a frequency switched scan: the search blocks held since
+        the last one are the signal, this block the reference."""
+        signal, self.fs_rows = self.fs_rows, []
+        if not signal:
+            return False
+        rows, nch = wf_raw.shape
+        chans = int(self.h["channels"])
+        if nch % chans:
+            return False
+        reference = wf_raw.reshape(rows, chans, nch // chans).mean(axis=2).astype(np.float32)
+        signal = np.concatenate(signal)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        dat = os.path.join(self.dir, f"obs_{stamp}.dat")
+        ref = dat.replace(".dat", "_ref.dat")
+        src, home = self.src, self.src.center_hz
+        try:
+            for fc, path, data in ((f_ref, ref, reference), (f_sig, dat, signal)):
+                src.center_hz = fc
+                obs = obs_parameters(self.cfg, src, self.h, chans, row_s, len(data) * row_s)
+                obs["fs_throw_hz"] = f"{f_ref - f_sig:.0f}"
+                obs["fs_ref"] = os.path.basename(ref)
+                data.tofile(path + ".tmp")
+                replace(path + ".tmp", path)
+                with open(path.replace(".dat", ".header"), "w") as fh:
+                    fh.write(f"mjd={self.fs_mjd:.8f}\n")
+                    for k2, v2 in obs.items():
+                        fh.write(f"{k2}={v2}\n")
+        finally:
+            src.center_hz = home
+        obs["fs_throw_hz"] = f_ref - f_sig
+        return self.record(dat, obs, stamp, ref=ref)
 
     def day_file(self, wf_raw, obs, block_s):
         """The compact H-line product: one integrated 1024-channel row per block,
@@ -748,7 +807,37 @@ class HLine:
                         last_peak_pct=None if meas is None else meas["pct"],
                         last_peak_db=None if meas is None or not usable_cal else meas["db"])
         self.trim()
+        if usable_cal and meas is not None:
+            self._map_scan(meas)
         return True
+
+    def _map_scan(self, meas):
+        """One row in the multi-day history; the plot is redrawn every 30 minutes, and
+        after every scan while it is young, so a new node does not show its first three
+        scans for half an hour."""
+        if not self.h.get("map3d", True):
+            return
+        try:
+            map3d.append(self.dir, time.time(), meas["v"], meas["spec_db"])
+            now = time.time()
+            if now - getattr(self, "_map_trim", 0) > 86400:
+                self._map_trim = now
+                map3d.trim(self.dir, float(self.h.get("day_keep_days", 30)))
+            have = os.path.getsize(os.path.join(self.dir, map3d.HISTORY)) // map3d.ROW.itemsize
+            wait = 0 if have < map3d.YOUNG_ROWS else 1800
+            if now - getattr(self, "_map_at", 0) > wait and have >= map3d.MIN_ROWS:
+                self._map_at = now
+                self._map_proc = map3d.start(self.cfg, getattr(self, "_map_proc", None))
+        except Exception as e:
+            self.log(f"multi-day plot failed: {e}")
+
+    def _map_backfill(self):
+        if not self.h.get("map3d", True) or os.path.exists(os.path.join(self.dir, map3d.HISTORY)):
+            return
+        try:
+            map3d.backfill(self.dir, lambda s, r, o: measure_fs(s, r, o, self.h), self.log)
+        except Exception as e:
+            self.log(f"multi-day plot not started from stored scans: {e}")
 
     def _upgrade_csv_header(self):
         """A scans.csv from an older version: rewrite its header line once. Old rows
@@ -799,6 +888,7 @@ class HLine:
         self.stop_requested()
         self.cal_requested()                 # a request left from before this start is void
         watch_stop(self.cfg["state_dir"], self.stop)
+        self._map_backfill()
         cal = "yes" if os.path.exists(self.cal) else "no"
         self.log(f"=== h-line: {self.src.name} at {self.src.center_hz / 1e6:.4f} MHz, "
                  f"{self.h['duration_s']} s scans, cal {cal}")

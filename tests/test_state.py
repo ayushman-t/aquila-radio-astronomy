@@ -130,3 +130,59 @@ def test_api_never_serves_config_or_outside_files():
         assert get("/link.txt") == 404
     finally:
         srv.shutdown()
+
+
+def test_search_blocks_then_a_reference_make_one_scan(tmp_path):
+    """Three search blocks at the signal tuning and one reference give one frequency
+    switched scan, and only the search blocks count as blocks."""
+    from aquila import config as cfgmod
+    from aquila import hline as hl
+    from aquila.sdr import Synthetic
+    from aquila.survey import Survey
+    cfg = cfgmod.load(str(tmp_path / "c.json"))
+    cfg.update(sdr="synthetic", sample_rate=250_000, state_dir=str(tmp_path / "s"))
+    cfg["advanced"].update(n_chan=1 << 15, rows=6, dwell_s=3, settle_skip_s=0.2,
+                           seti_min_chan=1024, require_ntp=False)
+    cfg["save"]["plots"] = False
+    cfg["hline"] = {"fs_search_blocks": 3}
+    cfg["center_mhz"] = 1420.4          # the band must hold the line to switch
+    src = Synthetic(cfg)
+    s = Survey(cfg, source=src)
+    f_sig, f_ref = hl.fs_tunings(s.hline.h, src.rate)
+    assert src.center_hz == f_sig and f_ref > f_sig
+    tuned = []
+    real = s.reference_block
+
+    def spy():
+        tuned.append(len(s.hline.fs_rows))
+        return real()
+
+    s.reference_block = spy
+    s.run(blocks=4)
+    assert tuned == [3]                     # the reference came after three search blocks
+    assert src.center_hz == f_sig           # and the receiver went back
+    assert s.tot["blocks"] == 4
+    hdir = os.path.join(cfg["state_dir"], "hline")
+    refs = [f for f in os.listdir(hdir) if f.endswith("_ref.dat")]
+    assert len(refs) == 1
+    sig = refs[0].replace("_ref.dat", ".dat")
+    chans = int(s.hline.h["channels"])
+    assert os.path.getsize(os.path.join(hdir, sig)) == 3 * 6 * chans * 4
+    assert os.path.getsize(os.path.join(hdir, refs[0])) == 6 * chans * 4
+
+
+def test_failed_reference_drops_the_signal_and_goes_back(tmp_path, monkeypatch):
+    from aquila import config as cfgmod
+    from aquila import dsp
+    from aquila.sdr import Synthetic
+    from aquila.survey import Survey
+    cfg = cfgmod.load(str(tmp_path / "c.json"))
+    cfg.update(sdr="synthetic", sample_rate=250_000, state_dir=str(tmp_path / "s"))
+    cfg["hline"] = {"fs_search_blocks": 3}
+    cfg["center_mhz"] = 1420.4          # the band must hold the line to switch
+    src = Synthetic(cfg)
+    s = Survey(cfg, source=src)
+    s.hline.fs_rows = [object()]
+    monkeypatch.setattr(dsp, "channelize", lambda *a, **k: (None, None, None))
+    assert s.reference_block() is False
+    assert s.hline.fs_rows == [] and src.center_hz == s.f_sig

@@ -125,6 +125,8 @@ def _handler(state_dir, budget, token=""):
                 return self._tail(query[5:])
             if path in ("/hits.csv", "/rfi.csv") and query.startswith("utc="):
                 return self._rows(path[1:], query[4:])
+            if path == "/hline/history.dat" and query.startswith("after="):
+                return self._history(query[6:])
             if path in ("/", "/index.json"):
                 body = json.dumps(index(state_dir, control=bool(token))).encode()
                 if not budget.allows(len(body), essential=True):
@@ -206,6 +208,30 @@ def _handler(state_dir, budget, token=""):
             budget.charge(len(body))
             self._text(body, full, "text/csv")
 
+        def _history(self, after):
+            """The multi-day plot rows newer than a time, so the app's rotatable plot
+            takes only the new scans (about 1 KB each) over a metered link."""
+            from . import map3d
+            try:
+                after = float(after)
+            except ValueError:
+                return self.send_error(400)
+            hdir = os.path.join(state_dir, "hline")
+            full = os.path.join(hdir, map3d.HISTORY)
+            if not os.path.isfile(full):
+                return self.send_error(404)
+            rows = map3d.load(hdir)
+            body = rows[rows["t"] > after].tobytes()
+            if not budget.allows(len(body)):
+                return self.send_error(429, "daily data budget spent")
+            budget.charge(len(body))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-Aquila-After", "1")
+            self.end_headers()
+            self.wfile.write(body)
+
         def _text(self, body, full, ctype="text/plain; charset=utf-8"):
             self.send_response(200)
             self.send_header("Content-Type", ctype)
@@ -252,6 +278,7 @@ def index(state_dir, control=False):
                        "candidates_oncomb.csv", "blocks.csv")},
             "hline": {"latest": os.path.exists(os.path.join(hl, "latest.png")),
                       "latest_raw": os.path.exists(os.path.join(hl, "latest_raw.png")),
+                      "map3d": os.path.exists(os.path.join(hl, "map3d.png")),
                       "cal": os.path.exists(os.path.join(hl, "cal.dat"))}}
 
 

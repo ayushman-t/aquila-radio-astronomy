@@ -17,7 +17,8 @@ import os
 import sys
 
 from . import api, config, curate, sdr
-from .hline import HLine
+from .hline import DEFAULTS as HLINE_DEFAULTS
+from .hline import HLine, fs_search_blocks, fs_tunings
 from .survey import Survey
 
 
@@ -108,11 +109,24 @@ def gui_entry():
 def cmd_curate(args):
     cfg = config.load(args.config)
     from .skymap import beam_deg
-    beam = beam_deg(cfg["dish"].get("diameter_m"), cfg["center_mhz"] * 1e6)
+    center = cfg["center_mhz"] * 1e6
+    h = cfg.get("hline") or {}
+    rate = sdr.make(cfg).rate
+    if fs_search_blocks(cfg, rate):
+        center = fs_tunings({**HLINE_DEFAULTS, **h}, rate)[0]
+    beam = beam_deg(cfg["dish"].get("diameter_m"), center)
     adv = cfg["advanced"]
-    print(json.dumps(curate.run(cfg["state_dir"], beam, cfg["center_mhz"] * 1e6,
+    print(json.dumps(curate.run(cfg["state_dir"], beam, center,
                                 adv.get("exclude_if_khz") or [], float(adv["snr_thresh"]),
-                                adv.get("comb_period_hz") or [10000, 100000]), indent=2))
+                                adv.get("comb_period_hz") or [10000, 100000],
+                                curate.track_blocks(cfg, rate)), indent=2))
+
+
+def cmd_map3d(args):
+    from . import map3d
+    cfg = config.load(args.config)
+    map3d.render(os.path.join(cfg["state_dir"], "hline"), str(cfg.get("name") or ""),
+                 int((cfg.get("hline") or {}).get("map_days", 7)))
 
 
 def cmd_status(args):
@@ -151,6 +165,7 @@ def main(argv=None):
     sub.add_parser("serve").set_defaults(fn=cmd_serve)
     sub.add_parser("gui").set_defaults(fn=cmd_gui)
     sub.add_parser("curate").set_defaults(fn=cmd_curate)
+    sub.add_parser("map3d").set_defaults(fn=cmd_map3d)
     sub.add_parser("status").set_defaults(fn=cmd_status)
     args = ap.parse_args(argv)
     try:

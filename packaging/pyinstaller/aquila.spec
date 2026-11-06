@@ -28,7 +28,8 @@ if os.path.isdir(tools):
     datas.append((tools, "tools"))
 
 hidden = ["aquila", "virgo", "scipy._lib.array_api_compat.numpy.fft",
-          "matplotlib.backends.backend_agg", "PySide6.QtSvg"]
+          "matplotlib.backends.backend_agg", "matplotlib.backends.backend_qtagg",
+          "matplotlib.backends.qt_compat", "mpl_toolkits.mplot3d", "PySide6.QtSvg"]
 hidden += collect_submodules("astropy.io") + collect_submodules("astropy.units")
 
 a = Analysis(

@@ -1,3 +1,16 @@
+aquila-radio-astronomy (0.2.13) unstable; urgency=medium
+
+  * New 3D tab next to Hydrogen line: a multi-day plot of the line against time,
+    on by default. Breaks in observing stay visible as gaps. Turn it with the
+    mouse; a remote node sends only its new scans, about 1 KB each.
+  * Frequency switching now also runs with the narrowband search on, so Start
+    observing gives a calibrated hydrogen line with no calibration step. Every
+    fourth block is the reference and is not searched. One switch in Settings
+    turns it off for both modes.
+  * The status bar no longer repeats itself after Settings is saved.
+
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Fri, 06 Nov 2026 19:30:00 +0530
+
 aquila-radio-astronomy (0.2.12) unstable; urgency=medium
 
   * Frequency switching: the line sits on the other side of the band centre and

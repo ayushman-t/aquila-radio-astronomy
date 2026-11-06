@@ -1,5 +1,9 @@
 """Frequency switching: the receiver's own shape must cancel and the line come out
 at its true height, whatever the passband looks like."""
+import os
+import time
+import warnings
+
 import numpy as np
 import pytest
 
@@ -270,3 +274,104 @@ def test_quiet_rows_drops_a_raised_floor_only():
     keep = hline.quiet_rows(rows)
     assert not keep[20:50].any() and keep[50:].all()
     assert hline.quiet_rows(1.6 * rows[:5]).all()
+
+
+def test_map3d_history_lines_up_and_draws(tmp_path):
+    from aquila import map3d
+    d = str(tmp_path)
+    assert map3d.render(d) is False
+    v = np.linspace(-250, 250, 1024)
+    t0 = 1_700_000_000.0
+    for i in range(30):
+        db = 0.5 * np.exp(-0.5 * ((v + 15) / 10) ** 2)
+        db[:5] = np.nan
+        map3d.append(d, t0 + i * 3600, v, db)
+    rows = map3d.load(d)
+    assert rows.size == 30
+    k = np.argmin(np.abs(map3d.V_MID + 15))
+    assert abs(rows["spec"][0][k] - 0.5) < 0.01
+    assert np.isnan(rows["spec"][0][np.argmin(np.abs(map3d.V_MID + 280))])
+    with open(os.path.join(d, map3d.HISTORY), "ab") as f:
+        f.write(b"\0" * 10)                    # a row still being written
+    assert map3d.load(d).size == 30
+    map3d.append(d, t0 + 30 * 3600, v, np.where(np.isnan(db), np.nan, 2 * db))
+    rows = map3d.load(d)
+    assert rows.size == 31 and rows["t"][-1] == t0 + 30 * 3600  # still lined up after the crash
+    assert abs(rows["spec"][-1][k] - 1.0) < 0.02
+    rows = rows[:-1]
+    rows.tofile(os.path.join(d, map3d.HISTORY))
+    assert map3d.render(d, "t", now=t0 + 30 * 3600) is True
+    assert os.path.getsize(os.path.join(d, map3d.PNG)) > 10000
+    map3d.trim(d, 1, now=t0 + 29 * 3600)
+    assert 20 <= map3d.load(d).size <= 26
+
+
+def test_map3d_gap_stays_a_gap():
+    from aquila import map3d
+    rows = np.zeros(40, map3d.ROW)
+    t0 = 1_700_000_000.0
+    rows["t"] = t0 + np.r_[np.arange(20) * 900.0, 86400 + np.arange(20) * 900.0]
+    rows["spec"] = 0.1
+    t, v, z, n = map3d.grid(rows, 7, now=t0 + 2 * 86400)
+    assert n == 40 and np.isnan(z).all(axis=1).any() and np.isfinite(z).all(axis=1).any()
+    empty = np.isnan(z).all(axis=1)
+    assert not empty[t < t0 + 15000].any() and not empty[t > t0 + 86400 + 900].any()
+    assert empty[(t > t0 + 20000) & (t < t0 + 80000)].all()
+
+
+def test_map3d_ignores_bad_clocks():
+    from aquila import map3d
+    rows = np.zeros(10, map3d.ROW)
+    t0 = 1_700_000_000.0
+    rows["t"] = t0 + np.arange(10) * 900.0
+    rows["t"][0] = 86400.0                     # a Pi before its clock is set
+    rows["t"][1] = t0 + 500 * 86400            # a wrong clock in the future
+    rows["spec"] = 0.1
+    t, v, z, n = map3d.grid(rows, 7, now=t0 + 9000)
+    assert n == 8 and t[-1] - t[0] < 7200
+
+
+@pytest.mark.skipif(not hasattr(time, "tzset"), reason="needs tzset")
+@pytest.mark.parametrize("hours", [1, 3, 20, 48, 72, 168, 700])
+def test_map_draws_cleanly_at_any_span_and_across_a_clock_change(tmp_path, monkeypatch, hours):
+    from aquila import map3d
+    monkeypatch.setenv("TZ", "America/New_York")
+    time.tzset()
+    try:
+        now = 1793887923.0  # 5 Nov 2026, four days after clocks went back there
+        v = np.arange(-300, 300, 1.0)
+        db = np.exp(-(((v + 17) / 20) ** 2))
+        for t in np.arange(now - hours * 3600, now, 900.0):
+            map3d.append(str(tmp_path), t, v, db)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert map3d.render(str(tmp_path), "x", days=30, now=now)
+    finally:
+        monkeypatch.undo()
+        time.tzset()
+
+
+def test_map_first_scans_fill_the_plot(tmp_path):
+    from aquila import map3d
+    now = 1793887923.0
+    v = np.arange(-300, 300, 1.0)
+    for i in range(3):
+        map3d.append(str(tmp_path), now - 450 + i * 215, v, np.exp(-((v / 20) ** 2)))
+    t, _, z, n = map3d.grid(map3d.load(str(tmp_path)), 7, now)
+    assert n == 3 and len(t) >= 2 and np.isfinite(z).any(axis=1).all()
+    assert t[-1] <= now + 300
+    assert map3d.render(str(tmp_path), "x", now=now)
+
+
+def test_search_frequency_switches_by_default_only_on_the_line():
+    """One switch for both modes: the search frequency switches unless it is switched
+    off, and never when its band does not hold the hydrogen line."""
+    from aquila.hline import fs_search_blocks
+    cfg = {"center_mhz": 1420.0, "hline": {}}
+    assert fs_search_blocks(cfg, 3e6) == 3
+    assert fs_search_blocks({**cfg, "center_mhz": 1420.405}, 2.4e6) == 3
+    assert fs_search_blocks({**cfg, "hline": {"freq_switch": False}}, 3e6) == 0
+    assert fs_search_blocks({**cfg, "hline": {"fs_search_blocks": 0}}, 3e6) == 0
+    assert fs_search_blocks({**cfg, "center_mhz": 1500.0}, 3e6) == 0
+    assert fs_search_blocks({**cfg, "center_mhz": 11000.0}, 10e6) == 0
+    assert fs_search_blocks(cfg, 250e3) == 0        # line outside so narrow a band
