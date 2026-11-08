@@ -1,3 +1,11 @@
+aquila-radio-astronomy (0.2.15) unstable; urgency=medium
+
+  * Narrowband search keeps a burst shorter than a block (two-block reference), flat
+    full-block lines go to the carrier list, curator end rule, test signal injector.
+  * 3D tab: turnable plot and map in their own boxes with buttons; date labels fixed.
+
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Sun, 08 Nov 2026 11:17:03 -0500
+
 aquila-radio-astronomy (0.2.14) unstable; urgency=medium
 
   * Windows, macOS and the portable Linux build: the node draws its 3D picture.
