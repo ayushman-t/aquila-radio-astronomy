@@ -129,7 +129,23 @@ def _ticks(x0, x1, most):
         step = 0
     if step >= 1:
         return ticks, "%d %b"
-    return ticks, "%H:%M" if span < 1.5 else "%d %b %H:%M"
+    if span < 1.5:
+        return ticks, "%H:%M"
+    # over several days the date goes on the midnight ticks only, the others get the
+    # hour, so neighbouring labels never run into each other
+    return ticks, _day_or_hour
+
+
+def _day_or_hour(x, pos=None):
+    from matplotlib.dates import num2date
+    d = num2date(x)
+    return d.strftime("%d %b") if d.hour == 0 and d.minute == 0 else d.strftime("%H:%M")
+
+
+def _format(axis, fmt):
+    from matplotlib.dates import DateFormatter
+    from matplotlib.ticker import FuncFormatter
+    axis.set_major_formatter(FuncFormatter(fmt) if callable(fmt) else DateFormatter(fmt))
 
 
 def render(hdir, title="", days=7, now=None):
@@ -158,14 +174,16 @@ def _lighter(x, z, most):
     return x[:n].reshape(-1, k).mean(1), zz
 
 
-def draw(fig, rows, title="", days=7, now=None, light=False):
+def draw(fig, rows, title="", days=7, now=None, light=False, fig2=None):
     """The 3D surface and the map beside it, on fig. Returns the 3D axes, or None when
-    there is not enough to draw. light: a coarser surface for a plot the user turns."""
+    there is not enough to draw. light: a coarser surface for a plot the user turns.
+    fig2: draw the map on this second figure instead, and no title on either (the app
+    puts the two in their own boxes)."""
     import datetime as dt
 
     from matplotlib import colormaps
     from matplotlib.colors import Normalize
-    from matplotlib.dates import DateFormatter, date2num
+    from matplotlib.dates import date2num
     from matplotlib.ticker import FixedLocator
     g = grid(rows, days, now)
     if g is None:
@@ -189,9 +207,13 @@ def draw(fig, rows, title="", days=7, now=None, light=False):
     lo, hi = float(np.percentile(finite, 1)), float(np.percentile(finite, 99.9))
     lo = min(lo, 0.0)
     fig.clear()
-    fig.suptitle(f"{title}   {n} scans".strip(), fontsize=12)
-    gs = fig.add_gridspec(1, 2, width_ratios=(1.7, 1))
-    ax = fig.add_subplot(gs[0], projection="3d", computed_zorder=False)
+    if fig2 is None:
+        fig.suptitle(f"{title}   {n} scans".strip(), fontsize=12)
+        gs = fig.add_gridspec(1, 2, width_ratios=(1.7, 1))
+        ax = fig.add_subplot(gs[0], projection="3d", computed_zorder=False)
+    else:
+        ax = fig.add_subplot(111, projection="3d", computed_zorder=False)
+    ax._aquila_scans = n
     xs, vs, zs = x, v, z
     if light:
         xs, zs = _lighter(x, z, 150)
@@ -229,20 +251,27 @@ def draw(fig, rows, title="", days=7, now=None, light=False):
     ax.set_zlim(lo, hi)
     ticks, fmt = _ticks(x[0], x[-1], 5)
     ax.xaxis.set_major_locator(FixedLocator(ticks))
-    ax.xaxis.set_major_formatter(DateFormatter(fmt))
+    _format(ax.xaxis, fmt)
     ax.tick_params(axis="x", labelsize=8)
     lay(ax)
-    b = fig.add_subplot(gs[1])
+    if fig2 is None:
+        b = fig.add_subplot(gs[1])
+    else:
+        fig2.clear()
+        b = fig2.add_subplot(111)
     m = b.pcolormesh(x, v, np.ma.masked_invalid(z.T), cmap="viridis", vmin=lo, vmax=hi,
                      shading="nearest")
-    fig.colorbar(m, ax=b, label="Power above baseline (dB)", pad=0.01)
+    (fig if fig2 is None else fig2).colorbar(m, ax=b, label="Power above baseline (dB)", pad=0.01)
     b.set_ylabel("Velocity (km/s, positive = receding)")
     b.set_xlabel("Time")
     ticks, fmt = _ticks(x[0], x[-1], 7)
     b.xaxis.set_major_locator(FixedLocator(ticks))
-    b.xaxis.set_major_formatter(DateFormatter(fmt))
+    _format(b.xaxis, fmt)
     b.tick_params(axis="x", labelsize=8)
-    fig.subplots_adjust(left=0.02, right=0.98, top=0.93, bottom=0.11, wspace=0.08)
+    if fig2 is None:
+        fig.subplots_adjust(left=0.02, right=0.98, top=0.93, bottom=0.11, wspace=0.08)
+    else:
+        fig.subplots_adjust(left=0.0, right=1.0, top=1.0, bottom=0.06)
     return ax
 
 

@@ -570,10 +570,11 @@ class ImagePane(QLabel):
 
 
 class Map3DPane(QWidget):
-    """The multi-day plot, drawn here so the user can turn it with the mouse. Until the
-    node sends its rows (or when the plotting backend is missing) it shows the picture
-    the node drew instead."""
-    HINT = "Drag to turn, right drag to zoom, double click to reset"
+    """The multi-day plot. Two boxes: the surface the user turns, with its own buttons,
+    and the map beside it that only looks. Until the node sends its rows (or when the
+    plotting backend is missing) it shows the picture the node drew instead."""
+    HINT = "Drag to turn, right drag or the buttons to zoom, Reset for the first view"
+    HOME = (32, -60)
 
     def __init__(self, text):
         super().__init__()
@@ -584,17 +585,61 @@ class Map3DPane(QWidget):
         self._rows = self._key = None
         self._title = ""
         self._drawn = None
+        self._zoom = 1.15
+        self.log = None            # the window's log, for the view trace
+        self._view = None          # (elev, azim, roll) after the last user action or redraw
         try:
             from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
             from matplotlib.figure import Figure
-            self.fig = Figure(figsize=(15, 6.5), dpi=100)
-            self.canvas = FigureCanvasQTAgg(self.fig)
-            self.canvas.setToolTip(self.HINT)
-            self.canvas.mpl_connect("button_release_event", self._released)
-            self.canvas.mpl_connect("button_press_event", self._pressed)
-            self._stack.addWidget(self.canvas)
         except Exception:
-            self.canvas = None
+            return
+        self.fig = Figure(figsize=(8.5, 6.0), dpi=100)
+        self.canvas = FigureCanvasQTAgg(self.fig)
+        self.canvas.setToolTip(self.HINT)
+        self.canvas.mpl_connect("button_release_event", self._released)
+        self.canvas.mpl_connect("button_press_event", self._pressed)
+        self.fig2 = Figure(figsize=(5.5, 6.0), dpi=100, layout="constrained")
+        self.canvas2 = FigureCanvasQTAgg(self.fig2)
+        for c in (self.canvas, self.canvas2):
+            c.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+            c.setMinimumSize(200, 200)
+        page = QWidget()
+        col = QVBoxLayout(page)
+        col.setContentsMargins(0, 0, 0, 0)
+        self.heading = QLabel("")
+        self.heading.setAlignment(Qt.AlignCenter)
+        self.heading.setStyleSheet("font-size: 15px; font-weight: 600;")
+        col.addWidget(self.heading)
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        box = QGroupBox("3D view: drag to turn, right drag to zoom, double click to reset")
+        v = QVBoxLayout(box)
+        v.setContentsMargins(6, 6, 6, 6)
+        v.addWidget(self.canvas, 1)
+        bar = QHBoxLayout()
+        for label, tip, fn in (("Reset view", "Back to the first view", self.reset_view),
+                               ("Zoom in", "", lambda: self.zoom(1.25)),
+                               ("Zoom out", "", lambda: self.zoom(0.8)),
+                               ("Left", "Turn a step to the left", lambda: self.turn(-15, 0)),
+                               ("Right", "Turn a step to the right", lambda: self.turn(15, 0)),
+                               ("Up", "Look from higher", lambda: self.turn(0, 10)),
+                               ("Down", "Look from lower", lambda: self.turn(0, -10)),
+                               ("Save image", "Save this view as a PNG", self.save_png)):
+            b = QPushButton(label)
+            b.setToolTip(tip or label)
+            b.clicked.connect(fn)
+            bar.addWidget(b)
+        bar.addStretch(1)
+        v.addLayout(bar)
+        row.addWidget(box, 3)
+        box2 = QGroupBox("Map of the same days")
+        v2 = QVBoxLayout(box2)
+        v2.setContentsMargins(6, 6, 6, 6)
+        v2.addWidget(self.canvas2, 1)
+        row.addWidget(box2, 2)
+        col.addLayout(row, 1)
+        self._stack.addWidget(page)
+        self.page = page
 
     # the image pane's interface, so the window treats both panes alike
     def set_data(self, data):
@@ -624,15 +669,18 @@ class Map3DPane(QWidget):
             self._draw()
 
     def showEvent(self, e):
+        # coming to this tab always starts from the standard view
         super().showEvent(e)
         if self._rows is not None and self._drawn != self._key:
             self._draw()
+        elif self.ax is not None:
+            self.reset_view()
 
     def _draw(self):
         from . import map3d
         view = (self.ax.elev, self.ax.azim) if self.ax is not None else None
         try:
-            ax = map3d.draw(self.fig, self._rows, self._title, light=True)
+            ax = map3d.draw(self.fig, self._rows, self._title, light=True, fig2=self.fig2)
         except Exception:
             ax = None
         if ax is None:
@@ -642,26 +690,86 @@ class Map3DPane(QWidget):
         self.ax = ax
         if view is not None:
             ax.view_init(elev=view[0], azim=view[1])
-            map3d.lay(ax)
-        self.ax.text2D(0.0, 0.0, self.HINT, transform=self.ax.transAxes, fontsize=8,
-                       color="0.45")
+        self._apply_zoom()
+        map3d.lay(ax)
+        self._trace("redraw", expect=view)
+        n = getattr(ax, "_aquila_scans", None)
+        self.heading.setText(f"{self._title}   {n} scans".strip() if n else self._title)
         self._drawn = self._key
-        self._stack.setCurrentWidget(self.canvas)
+        self._stack.setCurrentWidget(self.page)
         self.canvas.draw_idle()
+        self.canvas2.draw_idle()
+
+    def _apply_zoom(self):
+        if self.ax is not None:
+            with contextlib.suppress(TypeError):
+                self.ax.set_box_aspect((1.8, 1.0, 0.7), zoom=self._zoom)
+
+    def _relay(self):
+        if self.ax is not None:
+            from . import map3d
+            map3d.lay(self.ax)
+            self.canvas.draw_idle()
+
+    def _angles(self):
+        return (round(float(self.ax.elev), 1), round(float(self.ax.azim), 1),
+                round(float(getattr(self.ax, "roll", 0.0) or 0.0), 1))
+
+    def _trace(self, why, expect=None):
+        """Write the camera angles to the log. A redraw must leave the view exactly as the
+        last user action left it; if it does not, say so, that is a plot turning itself."""
+        if self.ax is None:
+            return
+        now = self._angles()
+        moved = (self._view is not None and why == "redraw"
+                 and any(abs(a - b) > 0.5
+                         for a, b in zip(now[:2], self._view[:2], strict=True)))
+        self._view = now
+        if self.log is not None:
+            msg = f"3D view {why}: elev {now[0]}, azim {now[1]}, roll {now[2]}"
+            if moved:
+                msg += "   VIEW CHANGED WITHOUT INPUT"
+            if moved or why != "redraw":
+                self.log(msg)
+
+    def reset_view(self):
+        if self.ax is not None:
+            self._zoom = 1.15
+            self.ax.view_init(elev=self.HOME[0], azim=self.HOME[1])
+            self._apply_zoom()
+            self._relay()
+            self._trace("reset")
+
+    def zoom(self, factor):
+        if self.ax is not None:
+            self._zoom = min(4.0, max(0.4, self._zoom * factor))
+            self._apply_zoom()
+            self._relay()
+
+    def turn(self, d_azim, d_elev):
+        if self.ax is not None:
+            self.ax.view_init(elev=self.ax.elev + d_elev, azim=self.ax.azim + d_azim)
+            self._relay()
+            self._trace("button")
+
+    def save_png(self):
+        if self.ax is None:
+            return
+        from PySide6.QtWidgets import QFileDialog
+        name = (self._title or "hydrogen-line") + "-3d.png"
+        path, _ = QFileDialog.getSaveFileName(self, "Save image", name, "PNG image (*.png)")
+        if path:
+            self.fig.savefig(path, dpi=150, facecolor="white")
 
     def _pressed(self, e):
         if e.dblclick and self.ax is not None and e.inaxes is self.ax:
-            from . import map3d
-            self.ax.view_init(elev=32, azim=-60)
-            map3d.lay(self.ax)
-            self.canvas.draw_idle()
+            self.reset_view()
 
     def _released(self, e):
         # turning keeps the order the surface was laid in for the old view: lay it again
         if self.ax is not None and e.inaxes is self.ax:
-            from . import map3d
-            map3d.lay(self.ax)
-            self.canvas.draw_idle()
+            self._relay()
+            self._trace("after drag")
 
 
 class SkyMap(QWidget):
@@ -1588,6 +1696,8 @@ class Main(QMainWindow):
         w.setStretchFactor(1, 1)
         self.hl_tab = tabs.addTab(w, "Hydrogen line")
         self.map_pane = Map3DPane(self.MAP_EMPTY)
+        self.map_pane.log = lambda m: self.log.appendPlainText(
+            time.strftime('%H:%M:%S  ') + m)
         self.map_tab = tabs.addTab(self.map_pane, "3D")
 
         # Candidates
@@ -2085,6 +2195,10 @@ class Main(QMainWindow):
 
     def _refresh_cands(self, cands):
         head, rows = cands
+        if head and self.c_thumb.text() == "Loading...":
+            # the table has arrived; the pane only changes again when a row is clicked
+            self.c_thumb.setText("No candidates yet." if not rows
+                                 else "Select a candidate to see its block.")
         if head and rows != getattr(self, "_c_rows", None):
             self._c_rows = rows
             self._fill(self.c_model, self.c_table,

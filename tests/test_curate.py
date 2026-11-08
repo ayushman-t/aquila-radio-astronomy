@@ -246,3 +246,39 @@ def test_history_rows_without_center_column():
         f.write(f"{now - 60:.0f},x,42672.500,10.00,0.99000,fit,100,20\n")
     got = curate.load_last_good_comb(p, now, 1420.6e6, (10e3, 100e3))
     assert got is not None and abs(got[0] - 42672.5) < 1e-6
+
+
+def test_track_still_strong_at_its_last_block_passes_when_the_next_block_is_silent():
+    """A transit whose last hit is still well above the threshold (the signal fell below
+    it between two blocks) is tier A when a searched block with no hit follows and the
+    other end faded normally. Without the block log, or when both ends are strong, it is
+    not."""
+    d = tempfile.mkdtemp()
+    t0, dt = 1_790_000_000, 380
+    snrs = [25.6, 27.3, 49.5, 37.0, 33.1, 28.6, 45.3]           # measured on the 0.9 m test
+    rows = []
+    for k, snr in enumerate(snrs):
+        rows.append((time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(t0 + k * dt)),
+                     1421.1e6 + 0.15 * k * dt, 0.136, snr))
+    _write(os.path.join(d, "hits.csv"), rows)
+
+    def blocks(n):
+        with open(os.path.join(d, "blocks.csv"), "w") as fh:
+            fh.write("utc,local,thumb,hits,carriers,top_snr,center_hz\n")
+            for k in range(n):
+                utc = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(t0 + k * dt))
+                fh.write(f"{utc},x,x,1,0,30.0,1420000000\n")
+
+    def tiers():
+        s = curate.run(d, beam_deg=16.4, center_hz=1420e6, track_min_blk=5)
+        return s["tierA"], s["tierB"]
+
+    assert tiers()[0] == 0                       # no block log: the strong end fails
+    blocks(7)                                    # the log ends with the track
+    assert tiers()[0] == 0
+    blocks(9)                                    # two silent searched blocks follow
+    assert tiers()[0] == len(snrs)
+
+    rows[0] = (rows[0][0], rows[0][1], rows[0][2], 47.0)    # now strong at both ends
+    _write(os.path.join(d, "hits.csv"), rows)
+    assert tiers()[0] == 0

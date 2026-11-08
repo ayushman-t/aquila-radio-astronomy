@@ -48,6 +48,7 @@ TRACK_MAX_SPAN = 25
 NOMINAL_DT_S = 215.0
 TRACK_MAX_SPAN_S = TRACK_MAX_SPAN * NOMINAL_DT_S
 PERSIST_BIN_HZ = 5000.0
+CENTER_TOL_HZ = 10e3         # the receiver tunes a few Hz off the asked centre
 PERSIST_MAX_SPAN_S = 2700.0  # scaled up for wide beams by persist_limit()
 PERSIST_WINDOW_S = 20 * 3600.0  # a span longer than this is a sidereal repeat, not one signal
 
@@ -151,6 +152,25 @@ def comb_index(freq, comb, center):
     return int(round((freq - center - phi) / p))
 
 
+def load_block_times(path, center_hz):
+    """Times of every searched block at this centre frequency, from blocks.csv, so the
+    envelope test can tell a track that ended from a search that stopped."""
+    out = []
+    if not os.path.exists(path):
+        return out
+    with open(path) as f:
+        for r in csv.DictReader(f):
+            try:
+                if abs(float(r.get("center_hz") or center_hz) - center_hz) > CENTER_TOL_HZ:
+                    continue
+            except ValueError:
+                continue
+            t = block_time(r.get("utc", ""))
+            if t is not None:
+                out.append(t)
+    return out
+
+
 def load_last_good_comb(path, now, center, window=(0.0, 1e12)):
     if not os.path.exists(path):
         return None
@@ -214,7 +234,22 @@ def track_groups(rows, t0):
     return out
 
 
-def track_envelope(rows, t0, snr_thresh):
+def _bounded(block_times, t, after):
+    """A searched block with no hit on this track sits right after (or before) its end:
+    the track really ended there, it was not the search that stopped."""
+    if not block_times:
+        return False
+    i = bisect.bisect_right(block_times, t) if after else bisect.bisect_left(block_times, t) - 1
+    if not 0 <= i < len(block_times):
+        return False
+    return abs(block_times[i] - t) <= TRACK_MAX_SPAN_S
+
+
+def track_envelope(rows, t0, snr_thresh, block_times=()):
+    """A real transit is the beam pattern cut at the threshold: its ends sit near the
+    threshold and its peak is interior. An end that is still strong passes when the
+    next searched block has no hit there (the signal fell below the threshold between
+    two blocks) and the other end fades normally; a track strong at both ends never does."""
     for r in rows:
         r["_env"] = None
         r["_span"] = 0.0
@@ -226,13 +261,20 @@ def track_envelope(rows, t0, snr_thresh):
         n = len(s)
         if n < ENV_MIN_BLK:
             continue
-        i = max(range(n), key=lambda k: s[k])
-        pf = i / (n - 1)
+        pe = s[max(range(n), key=lambda k: s[k])] - snr_thresh
+        r0 = (s[0] - snr_thresh) / pe if pe > 0 else 1.0
+        r1 = (s[-1] - snr_thresh) / pe if pe > 0 else 1.0
+        b0 = r0 >= ENV_EDGE_MAX and _bounded(block_times, block_time(members[0]["utc"]), False)
+        b1 = r1 >= ENV_EDGE_MAX and _bounded(block_times, block_time(members[-1]["utc"]), True)
+        edge_ok = (min(r0, r1) < ENV_EDGE_MAX) and (max(r0, r1) < ENV_EDGE_MAX or b0 or b1)
+        # a bounded end counts one silent block at the threshold for the peak position
+        ext = ([snr_thresh] if b0 else []) + s + ([snr_thresh] if b1 else [])
+        i = max(range(len(ext)), key=lambda k: ext[k])
+        pf = i / (len(ext) - 1)
         interior = min(pf, 1.0 - pf)
-        pe = s[i] - snr_thresh
-        er = (max(s[0], s[-1]) - snr_thresh) / pe if pe > 0 else 1.0
-        env = {"n": n, "interior": round(interior, 3), "edge_ratio": round(er, 3),
-               "pass": bool(er < ENV_EDGE_MAX and interior >= ENV_INTERIOR_MIN)}
+        env = {"n": n, "interior": round(interior, 3), "edge_ratio": round(max(r0, r1), 3),
+               "bounded": bool(b0 or b1),
+               "pass": bool(edge_ok and interior >= ENV_INTERIOR_MIN)}
         for m in members:
             m["_env"] = env
 
@@ -246,8 +288,9 @@ def track_blocks(cfg, rate):
 
 def curate(rows, center_hz=1420e6, exclude_if_khz=(), snr_thresh=25.0,
            persist_max_s=PERSIST_MAX_SPAN_S, comb_window=(10e3, 100e3),
-           history_path=None, now=None, track_min_blk=TRACK_MIN_BLK):
+           history_path=None, now=None, track_min_blk=TRACK_MIN_BLK, block_times=()):
     now = time.time() if now is None else now
+    block_times = sorted(block_times)
     empty = {"A": [], "B": [], "C": [], "rfi": 0, "rfi_persist": 0, "rfi_comb": 0,
              "rfi_edge": 0, "oncomb_review": []}
     blocks = sorted({r["utc"] for r in rows})
@@ -328,7 +371,7 @@ def curate(rows, center_hz=1420e6, exclude_if_khz=(), snr_thresh=25.0,
             score[D] = (len(shared), sum(shared), -abs(D))
     D_LO = max(score, key=score.get) if score else 0.0
 
-    track_envelope(rows, t0, snr_thresh)
+    track_envelope(rows, t0, snr_thresh, block_times)
 
     # 3. persistence: longest span per frequency bin inside any 20 h window (so it does
     # not reset at UTC midnight, and a source seen again next sidereal day is not "on")
@@ -416,9 +459,10 @@ def run(state_dir, beam_deg=None, center_hz=1420e6, exclude_if_khz=(), snr_thres
     cand_oncomb = os.path.join(state_dir, "candidates_oncomb.csv")
     history = os.path.join(state_dir, "comb_history.csv")
     summ_path = os.path.join(state_dir, "curate_summary.json")
+    block_times = load_block_times(os.path.join(state_dir, "blocks.csv"), center_hz)
     out, nb, d_lo, comb, stats = curate(load(hits), center_hz, exclude_if_khz, snr_thresh,
                                         persist_limit(beam_deg), comb_window, history, now,
-                                        track_min_blk)
+                                        track_min_blk, block_times)
     order = {"A": 0, "B": 1, "C": 2}
 
     def row(r, extra=""):

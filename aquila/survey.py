@@ -22,6 +22,7 @@ from .spur import SpurMask
 from .store import Store, replace
 
 NO_RECEIVER = "waiting for the receiver"
+NORM_REF_MAX_AGE_S = 1800.0   # a previous block older than this is no longer a reference
 
 
 def ntp_synced():
@@ -47,6 +48,7 @@ class Survey:
         self.running = True
         self.start_ts = time.time()
         self.hline = HLine(cfg, source=self.src, log=self.store.log)
+        self._norm_ref = None          # (center_hz, n_chan, time, previous block median)
         self.hline.own_status = False
         self.fs_blocks = self.hline.fs_search = fs_search_blocks(cfg, self.src.rate)
         self.since_ref = 0
@@ -98,6 +100,7 @@ class Survey:
              "blocks": self.tot["blocks"], "obs_s": round(self.tot["obs_s"]),
              "hits_total": self.store.count_hits(), "seti": getattr(self, "seti", None),
              "api": getattr(self, "api_addr", ""),
+             **({"inject": self.src.injector.spec()} if self.src.injector else {}),
              "footprint_mb": round(self.store.footprint_bytes() / 1e6, 1),
              "uptime_s": int(time.time() - self.start_ts), "ts": time.time()}
         d.update(extra)
@@ -130,6 +133,8 @@ class Survey:
                     raw = None
             else:
                 log(f"raw IQ not saved: a block needs {need / 1e9:.1f} GB free")
+        if self.src.injector:
+            self.src.injector.begin_block()
         try:
             wf, chan_bw, row_s = dsp.channelize(self.src, nch, int(adv["rows"]),
                                                 float(adv["dwell_s"]), float(adv["settle_skip_s"]),
@@ -151,6 +156,9 @@ class Survey:
                     log(f"raw IQ file error: {e}")
         if wf is None:
             return False
+        for inj in (self.src.injector.touched if self.src.injector else []):
+            log(f"TEST SIGNAL injected in this block: {inj.sky_hz / 1e6:.6f} MHz, "
+                f"{inj.drift:+.3f} Hz/s, envelope now {inj.envelope(time.time()):.2f}")
         rms = getattr(self.src, "input_rms", None)
         if (rms is not None and rms < dsp.WEAK_INPUT_COUNTS
                 and not getattr(self, "_weak_warned", False)):
@@ -167,7 +175,11 @@ class Survey:
             self.hline.record_block(wf, row_s)
         except Exception as e:
             log(f"h-line product failed: {e}")
-        dsp.normalize(wf)
+        prev = self._norm_ref
+        key = (self.src.center_hz, nch)
+        if prev is not None and (prev[0] != key or time.time() - prev[1] > NORM_REF_MAX_AGE_S):
+            prev = None
+        self._norm_ref = (key, time.time(), dsp.normalize(wf, prev[2] if prev else None))
 
         blank = dsp.blank_set(nch, chan_bw, adv["dc_notch_hz"], adv.get("exclude_if_khz"))
         if adv.get("adaptive_mask"):
@@ -225,8 +237,8 @@ class Survey:
         block = {"utc": utc, "local": local, "center_hz": self.src.center_hz, "n_chan": nch,
                  "chan_bw": chan_bw, "thumb": os.path.basename(thumb), "sdr": self.src.name}
         strong = adv["strong_carrier_snr"]
-        carriers = [h for h in hits if h["snr"] >= strong]
-        cands = [h for h in hits if h["snr"] < strong]
+        carriers = [h for h in hits if h["snr"] >= strong or h.get("flat")]
+        cands = [h for h in hits if h["snr"] < strong and not h.get("flat")]
         if writable and carriers and save.get("csv", True):
             st.append_hits(carriers, block, st.rfi)
         if writable and cands and save.get("csv", True):

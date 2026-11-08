@@ -2,6 +2,8 @@
 
 Desktop app and observing node for a dish and an SDR. It does two things with one observation: hydrogen line spectra of whatever the dish is looking at, and a narrowband drift search across the band. Point the dish, plug in the receiver, press Start.
 
+The hydrogen line is calibrated by frequency switching: the receiver alternates between the line and a tuning a few MHz higher where there is no line, and dividing one by the other cancels the receiver's band shape and gain. No 50 ohm terminator and no cold sky reference are needed, though both can still be used. Every scan is kept with its peak and velocity, and a 3D plot shows the line over several days.
+
 Works with Airspy, HydraSDR, RTL-SDR and HackRF. Runs on Windows, Linux and macOS, and as a headless node on a Raspberry Pi. Several nodes can be watched from one desktop over the network.
 
 Ayushman Tripathi, [radioastronomy.in](https://radioastronomy.in/). GPL-3.0-or-later.
@@ -43,7 +45,7 @@ Settings has the rest, with working defaults. Advanced values live in the config
 
 ## What you get
 
-**Narrowband search.** Every 150 s block of the receiver goes through a 2^20 point FFT into a waterfall a few Hz per channel. Every channel is divided by its own median over the block, which flattens the passband and anything fixed in frequency; a drifting signal survives. Every integer channel shift across the block is then tried, a de-Doppler search, and channels above threshold are logged as hits with their drift, width and how many rows of the block they occupy. Strong steady carriers go to a separate list. Hits are linked across blocks offline: a track that drifts relative to the receiver's own reference and lasts a beam transit is tier A; a frequency seen at widely separated times of the same day cannot be the sky and is dropped.
+**Narrowband search.** Every 150 s block of the receiver goes through a 2^20 point FFT into a waterfall a few Hz per channel. Every channel is divided by a reference level, the geometric mean of its median over this block and over the previous one, which flattens the passband and anything fixed in frequency while a drifting signal, or a burst shorter than a block like the Wow! event, survives. A line at the same level in every row of a block is a carrier whose level changed and goes to the carrier list. Every integer channel shift across the block is then tried, a de-Doppler search, and channels above threshold are logged as hits with their drift, width and how many rows of the block they occupy. Strong steady carriers go to a separate list. A test signal can be added to the receiver's own samples (`advanced.inject` in the config) to check the whole search end to end; every block it touches is marked in the log. Hits are linked across blocks offline: a track that drifts relative to the receiver's own reference and lasts a beam transit is tier A; a frequency seen at widely separated times of the same day cannot be the sky and is dropped.
 
 ![narrowband search](docs/survey.png)
 

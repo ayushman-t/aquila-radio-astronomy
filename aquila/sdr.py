@@ -167,6 +167,10 @@ class Source:
         self.center_hz = int(round(cfg["center_mhz"] * 1e6))
         self.bias = bool(adv.get("bias_tee", True))
         self.gain = self.gains_from(adv.get("gain", "preset"))
+        self.injector = None
+        if adv.get("inject"):
+            from .inject import Injectors
+            self.injector = Injectors(adv["inject"], self.rate)
 
     @classmethod
     def available(cls):
@@ -200,7 +204,10 @@ class Source:
 
     def to_complex(self, raw):
         s = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
-        return s[0::2] + 1j * s[1::2]
+        z = s[0::2] + 1j * s[1::2]
+        if self.injector is not None:
+            z = self.injector.apply(z, self.center_hz, getattr(self, "input_rms", None))
+        return z
 
     STALL_S = 20.0      # no samples this long: the tool is alive but the radio is not
 

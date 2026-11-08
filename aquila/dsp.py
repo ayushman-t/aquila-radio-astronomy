@@ -60,13 +60,19 @@ WEAK_INPUT_TEXT = ("input very weak ({:.1f} counts of noise): the SDR is hearing
                    "own supply) and the cable is good. Line and SETI results will be poor.")
 
 
-def normalize(wf):
-    """Divide every channel by its median over time. Anything fixed in frequency
-    (passband shape, internal combs, steady carriers) divides to 1. A drifting
-    signal only visits a channel for a few rows, so it survives."""
-    ref = np.median(wf, axis=0)
+def normalize(wf, prev_ref=None):
+    """Divide every channel by its reference level so anything fixed in frequency
+    (passband shape, internal combs, steady carriers) divides to 1 while a drifting
+    signal, which visits a channel for a few rows only, survives. The reference is the
+    geometric mean of this block's per-channel median and the previous block's: a
+    burst that fills half of one block (the Wow! event lasted 72 s) then lifts only a
+    quarter of the reference and is still found, while a carrier that flickers or
+    changes level between blocks still divides to about 1. Returns this block's
+    median for the next call."""
+    med = np.median(wf, axis=0)
+    ref = med if prev_ref is None or prev_ref.shape != med.shape else np.sqrt(med * prev_ref)
     wf /= (ref + 1e-9)
-    return wf
+    return med
 
 
 def blank_set(n_chan, chan_bw, dc_notch_hz, exclude_if_khz):
@@ -164,10 +170,16 @@ def drift_search(wf, chan_bw, row_s, max_drift, snr_thresh, blank_chans=(),
         track = wf[ridx, np.clip(h["chan"] + sh, 0, nch - 1)]
         x = np.clip(track - floor, 0.0, None)
         h["coverage"] = float((x.sum() ** 2) / (np.sum(x * x) + 1e-12)) if x.sum() > 0 else 0.0
+        # a line at the same level in every row of the block is a carrier whose level
+        # changed since the reference block, not a burst and not a drifter
+        h["flat"] = bool(dch == 0 and h["coverage"] >= FLAT_COVERAGE * rows
+                         and x.mean() > 0 and x.std() < FLAT_RMS * x.mean())
     return out
 
 
 GHOST_RATIO = 3.0
+FLAT_COVERAGE = 0.85   # of the rows
+FLAT_RMS = 0.15        # row to row scatter, as a fraction of the level
 
 
 def drop_ghosts(hits, chan_bw, total_s, near_ch=2):
