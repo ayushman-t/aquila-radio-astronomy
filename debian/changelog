@@ -1,3 +1,12 @@
+aquila-radio-astronomy (0.2.16) unstable; urgency=medium
+
+  * Frequency switching is the only hydrogen line calibration: the checkbox, the
+    Calibrate button, the Take and Delete receiver calibration entries and the control
+    token are gone; a config that had it switched off switches anyway.
+  * 3D tab: the velocity axis runs the same way as the map beside it.
+
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Mon, 09 Nov 2026 11:56:22 -0500
+
 aquila-radio-astronomy (0.2.15) unstable; urgency=medium
 
   * Narrowband search keeps a burst shorter than a block (two-block reference), flat

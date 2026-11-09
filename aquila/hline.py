@@ -39,14 +39,13 @@ DEFAULTS = {
     # calibration is needed. throw 0 = twice the flat half of the band, so the
     # reference tuning holds no line (it is always above the line: below, the RF
     # chain's shape differs). Measured on the 2.4 m against its 50 ohm cal: baseline
-    # 8 times flatter, same line shape.
-    "freq_switch": True,
+    # 8 times flatter, same line shape. Since 0.2.16 this is the only mode: a stored
+    # receiver reference (aquila cal) is used only where the band holds no line.
     "fs_phase_s": 30,
     "fs_throw_hz": 0,
     # search and calibrated line from one receiver: this many search blocks at the signal
-    # tuning, then one reference block, not searched. 0, or freq_switch off: the line in
-    # search mode is divided by a stored calibration. Measured on the 2.4 m: 150 s phases
-    # as flat as 30 s.
+    # tuning, then one reference block, not searched. 0: the line in search mode is
+    # divided by a stored calibration. Measured on the 2.4 m: 150 s phases as flat as 30 s.
     "fs_search_blocks": 3,
     # frequency switched: baseline fitted outside +-this. Measured on the 0.9 m by retuning:
     # broad structure fixed in sky frequency reaches about -170 km/s, so +-120 fitted part of
@@ -287,10 +286,8 @@ def fs_tunings(h, rate):
 
 def fs_search_blocks(cfg, rate):
     """Search blocks between two reference blocks, 0 when the search does not frequency
-    switch: switched off, or a search tuned where its band does not hold the line."""
+    switch: a search tuned where its band does not hold the line."""
     h = {**DEFAULTS, **(cfg.get("hline") or {})}
-    if not h.get("freq_switch", True):
-        return 0
     if abs(cfg["center_mhz"] * 1e6 - h["f_rest_hz"]) > min(0.344 * rate, 1.6e6):
         return 0
     return max(0, int(h.get("fs_search_blocks") or 0))
@@ -547,8 +544,7 @@ class HLine:
              "dish": {k: v for k, v in self.cfg["dish"].items() if k != "rotator"},
              "site": self.cfg.get("site"),
              "uptime_s": int(time.time() - self.start_ts),
-             "calibration": "frequency switching" if self.h.get("freq_switch", True)
-             else ("receiver" if os.path.exists(self.cal) else "none"),
+             "calibration": "frequency switching",
              "ts": time.time()}
         d.update(extra)
         try:
@@ -559,16 +555,7 @@ class HLine:
     def scan(self):
         self.cfg.update(config.pointing(self.cfg))
         self._kept = []
-        if self.h.get("freq_switch", True):
-            return self.fs_scan()
-        obs = obs_parameters(self.cfg, self.src, self.h)
-        self.status("capturing", scans=self.n_scans)
-        stamp = time.strftime("%Y%m%d_%H%M%S")
-        dat = os.path.join(self.dir, f"obs_{stamp}.dat")
-        if not observe(self.src, dat, obs, self.log,
-                       blank=self.h.get("blank_pulses", False), kept=self._kept):
-            return False
-        return self.record(dat, obs, stamp)
+        return self.fs_scan()
 
     def fs_scan(self):
         """One frequency switched scan: signal (the line in the band) and reference

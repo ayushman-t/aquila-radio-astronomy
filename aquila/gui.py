@@ -54,11 +54,9 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedLayout,
     QStackedWidget,
-    QStyle,
     QStyledItemDelegate,
     QTableView,
     QTabWidget,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -1008,12 +1006,6 @@ class Settings(QDialog):
         b.clicked.connect(self.pick_folder)
         row.addWidget(b)
         form.addRow("Data folder:", row)
-        self.token = QLineEdit(cfg["advanced"].get("api_token", ""))
-        self.token.setPlaceholderText("blank = other computers can only view this node")
-        self.token.setToolTip("A word other copies of the app must give to ask this node for a "
-                              "receiver calibration over the network. Takes effect when the "
-                              "node is next started.")
-        form.addRow("Control token:", self.token)
         self.share = QCheckBox("Let other computers on this network see this node")
         self.share.setChecked(cfg["advanced"].get("api_bind", "127.0.0.1") not in
                               ("127.0.0.1", "localhost", "::1"))
@@ -1043,11 +1035,6 @@ class Settings(QDialog):
         snote.setStyleSheet("color: gray")
         form.addRow(snote)
         hl = cfg.get("hline") or {}
-        self.fs = QCheckBox("Frequency switching")
-        self.fs.setChecked(bool(hl.get("freq_switch", True)))
-        self.fs.setToolTip("On: no calibration needed. Off: scans use a reference taken with "
-                           "Calibrate now.")
-        form.addRow("Calibration:", self.fs)
         self.med_n = QSpinBox()
         self.med_n.setRange(0, 201)
         self.med_n.setSpecialValueText("Auto (about 5 km/s)")
@@ -1069,7 +1056,7 @@ class Settings(QDialog):
         row.addWidget(self.med_m)
         row.addStretch(1)
         form.addRow("Median filter:", row)
-        self.plot_smooth = QCheckBox("Smooth the calibrated plot")
+        self.plot_smooth = QCheckBox("Smooth the hydrogen line plot")
         self.plot_smooth.setChecked(bool(hl.get("plot_smooth", True)))
         self.plot_smooth.setToolTip("Only changes how the line is drawn. "
                                     "The measured peak stays the same.")
@@ -1156,8 +1143,7 @@ class Settings(QDialog):
             box.setSingleStep(step)
             box.setValue(now[key])
             box.setToolTip("Highest is the default. Lower it if a strong signal overdrives "
-                           "the receiver. Takes effect when observing is next started, "
-                           "and a calibration must be taken again.")
+                           "the receiver. Takes effect when observing is next started.")
             self.gain_row.addWidget(QLabel(label))
             self.gain_row.addWidget(box)
             self.gain_boxes[key] = box
@@ -1220,14 +1206,12 @@ class Settings(QDialog):
         c["app"] = dict(c.get("app") or {}, observe_on_open=self.auto_obs.isChecked(),
                         narrowband=self.narrow.isChecked())
         c["hline"] = dict(c.get("hline") or {}, n=self.med_n.value(), m=self.med_m.value(),
-                         freq_switch=self.fs.isChecked(),
                          plot_smooth=self.plot_smooth.isChecked(),
                          blank_pulses=self.blank.isChecked())
         c["_autostart"] = self.auto_login.isChecked()
         c["center_mhz"] = self.freq.value()
         c["sample_rate"] = int(self.rate.currentData() or 0)
         c["advanced"]["n_chan"] = int(self.fft.currentData())
-        c["advanced"]["api_token"] = self.token.text().strip()
         c["advanced"]["api_bind"] = "0.0.0.0" if self.share.isChecked() else "127.0.0.1"
         c["advanced"]["bias_tee"] = self.bias.isChecked()
         c["advanced"]["gain"] = self._gain_values()
@@ -1480,7 +1464,6 @@ class Main(QMainWindow):
         f.addAction(self._act("Connect to node...", self.connect_node))
         self.recent_menu = f.addMenu("Recent nodes")
         self.recent_menu.aboutToShow.connect(self._fill_recent)
-        f.addAction(self._act("Set control token for this node...", self.set_token))
         f.addAction(self._act("Forget this node", self.forget_node))
         f.addAction(self._act("Open data folder", self.open_folder))
         f.addSeparator()
@@ -1488,10 +1471,8 @@ class Main(QMainWindow):
         o = m.addMenu("&Observe")
         self.a_seti = self._act("Start observing", lambda: self.start("run"))
         self.a_hline = self._act("Start hydrogen line only", lambda: self.start("hline"))
-        self.a_cal = self._act("Take receiver calibration...", self.take_cal)
-        self.a_delcal = self._act("Delete receiver calibration...", self.delete_cal)
         self.a_stop = self._act("Stop", lambda: self.stop())
-        for a in (self.a_seti, self.a_hline, self.a_cal, self.a_delcal, self.a_stop):
+        for a in (self.a_seti, self.a_hline, self.a_stop):
             o.addAction(a)
         st = m.addMenu("&Settings")
         st.addAction(self._act("Settings...", self.settings, "Ctrl+,"))
@@ -1639,35 +1620,19 @@ class Main(QMainWindow):
         topv.setContentsMargins(0, 0, 0, 0)
         self.hl_banner, self.hl_live, row = self._banner(lambda: self.view_scan(None))
         topv.addLayout(row)
-        # both plots side by side (calibrated in dB, virgo's raw), the sky map narrower
+        # both plots side by side (frequency switched in dB, virgo's raw), the sky map narrower
         hdr = QHBoxLayout()
         self.lb_raw = QLabel("")
         self.lb_raw.setStyleSheet("font-weight: bold")
         hdr.addWidget(self.lb_raw)
-        self.b_cal = QPushButton("Calibrate now")
-        self.b_cal.setStyleSheet("QPushButton { background: #2e9e4f; color: white; "
-                                 "font-weight: bold; padding: 3px 12px; border-radius: 4px; }"
-                                 "QPushButton:disabled { background: #9ccfae; }")
-        self.b_cal.clicked.connect(self.take_cal)
-        hdr.addWidget(self.b_cal)
-        hdr.addSpacing(12)
-        self.lb_calm = QLabel("")
-        hdr.addWidget(self.lb_calm)
-        self.b_calinfo = QToolButton()
-        self.b_calinfo.setIcon(self.style().standardIcon(QStyle.SP_MessageBoxInformation))
-        self.b_calinfo.setAutoRaise(True)
-        self.b_calinfo.clicked.connect(
-            lambda: QMessageBox.information(self, "Calibration", self.b_calinfo.toolTip()))
-        hdr.addWidget(self.b_calinfo)
-        self._set_cal_mode("none")
         hdr.addStretch(1)
         topv.addLayout(hdr)
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
         topv.addLayout(top, 1)
-        self.hl_cal = ImagePane("No calibrated plot yet. Take a receiver calibration first.")
+        self.hl_cal = ImagePane("No plot yet. A scan takes about 5 minutes.")
         self.hl_raw = ImagePane("No scan yet.")
-        self.gb_cal = QGroupBox("Calibrated, power above baseline (dB)")
+        self.gb_cal = QGroupBox("Frequency switched, power above baseline (dB)")
         lay_c = QVBoxLayout(self.gb_cal)
         lay_c.setContentsMargins(2, 2, 2, 2)
         lay_c.addWidget(self.hl_cal)
@@ -1773,7 +1738,7 @@ class Main(QMainWindow):
         row.addWidget(btn)
         return lb, btn, row
 
-    MAP_EMPTY = "The plot builds up as calibrated scans come in."
+    MAP_EMPTY = "The plot builds up as scans come in."
     LINE_ONLY = "This node is observing the hydrogen line only."
     LIVE_CSS = ("QLabel { background: #2e9e4f; color: white; font-weight: bold; "
                 "padding: 3px 8px; border-radius: 4px; }")
@@ -1951,43 +1916,6 @@ class Main(QMainWindow):
             self.st["state"].setText(state)
         self.a_seti.setEnabled(not running and not n.remote and not held)
         self.a_hline.setEnabled(not running and not n.remote and not held)
-        self.a_cal.setEnabled(not running and not n.remote and not held)
-        has_cal = bool((idx.get("hline") or {}).get("cal"))
-        # a search that frequency switches takes no stored reference: it would be taken at
-        # the wrong tuning for the day the switching is turned off
-        self._fs_search = (raw_state not in ("not running", "stopped")
-                           and s.get("calibration") == "frequency switching"
-                           and s.get("mode") != "hline")
-        if s.get("calibration") == "frequency switching":
-            self._set_cal_mode("frequency switching")
-        else:
-            self._set_cal_mode("receiver" if has_cal else "none")
-        self.a_delcal.setEnabled(not n.remote and has_cal)
-        self.a_delcal.setToolTip("" if not n.remote else
-                                 "A remote node's calibration is deleted on its own computer.")
-        pending = bool(idx.get("cal_pending")) or raw_state == "calibrating"
-        if not n.remote and not (running or lock.holder(self.cfg["state_dir"])):
-            pending = False         # left by an observer that died: void at the next start
-        if pending:
-            self.b_cal.setText("Calibrating..." if raw_state == "calibrating"
-                               else "Calibration queued")
-            self.b_cal.setEnabled(False)
-            self.b_cal.setToolTip("Runs after the current block.")
-        elif n.remote:
-            can = bool(idx.get("control"))
-            self.b_cal.setText(("Recalibrate" if has_cal else "Calibrate now") + " (remote)")
-            self.b_cal.setEnabled(can)
-            self.b_cal.setToolTip(
-                "Ask this node for a reference scan. It runs after the current block; "
-                "observing continues by itself." if can else
-                "This node has no control token set. On the node: Settings, Control token "
-                "(advanced.api_token in its config), then restart it.")
-        else:
-            self.b_cal.setText("Recalibrate" if has_cal else "Calibrate now")
-            self.b_cal.setEnabled(True)       # any aquila observer here picks up the request
-            self.b_cal.setToolTip(
-                "Record the receiver reference (50 ohm terminator or cold sky). "
-                "If observing is running here, it pauses for one scan and resumes.")
         api_s = f"    api {s['api']}" if s.get("api") else ""
         self.sb_label.setText(f"{n.name}    {state}    {'remote' if n.remote else n.base}{api_s}")
         if "npz" not in d:
@@ -2072,9 +2000,6 @@ class Main(QMainWindow):
             when = stamp(row[5] if len(row) > 5 else "", scan_time(row[1]))
         elif sel:
             when = scan_time(sel)
-        self.hl_cal._placeholder = ("No plot yet. A scan takes about 5 minutes."
-                                    if self._cal_mode == "frequency switching" else
-                                    "No calibrated plot yet. Take a receiver calibration first.")
         self.hl_cal.set_data(cal)
         self.hl_raw.set_data(raw)
         self.map_pane.set_data(d.get("map3d"))
@@ -2091,11 +2016,7 @@ class Main(QMainWindow):
         if not getattr(self, "_sky_top", False):
             self._sky_top = True
             self.hl_top.addWidget(self.gb_sky, 2)
-        if cal or getattr(self, "_cal_mode", "") == "frequency switching":
-            self.lb_raw.setText(f"Scan {when}" if when else "")
-        else:
-            self.lb_raw.setText((f"Scan {when}   " if when else "")
-                                + "(no receiver calibration yet)")
+        self.lb_raw.setText(f"Scan {when}" if when else "")
         if head and rows != getattr(self, "_hl_rows", None):
             self._hl_rows = rows
             self._fill_scan_table(
@@ -2367,129 +2288,6 @@ class Main(QMainWindow):
                 t.wait(15000)
         e.accept()
 
-    CAL_MODES = {
-        "frequency switching": (
-            "Calibration: frequency switching",
-            "Calibration: frequency switching (automatic)\n\n"
-            "The radio switches between two tunings: one with the hydrogen line in the "
-            "band, and one 2 to 3 MHz higher, where there is no hydrogen.\n\n"
-            "The receiver's own band shape, its spurs and the spike in the middle of the band "
-            "are the same in both, so dividing one by the other cancels them, channel by "
-            "channel. What is left is the sky: the line on top of a nearly flat background. "
-            "A straight line fitted well away from the line takes out the rest, and the plot "
-            "shows the line in dB above it.\n\n"
-            "Nothing to set up and nothing to point at. The reference is measured again every "
-            "few minutes, so slow drift of the receiver cancels too. With the narrowband "
-            "search on, every fourth block is the reference and is not searched. It can be "
-            "switched off in Settings."),
-        "receiver": (
-            "Calibration: receiver reference",
-            "Calibration: receiver reference\n\n"
-            "Each scan is divided by a stored reference, recorded with a 50 ohm terminator on "
-            "the LNA input or with the dish on cold sky. That removes the receiver's band "
-            "shape. A straight baseline takes out the rest, and the plot shows the line in dB "
-            "above it.\n\n"
-            "Take a new reference when the receiver, its gains or its sample rate change. "
-            "With frequency switching on in Settings none is needed."),
-        "none": (
-            "Calibration: none",
-            "Calibration: none yet\n\n"
-            "Scans show the raw receiver output, with its band shape still in. Use Calibrate "
-            "now with a 50 ohm terminator on the LNA input or the dish on cold sky.\n\n"
-            "With frequency switching on in Settings no calibration is needed: the app "
-            "calibrates itself."),
-    }
-
-    def _cal_text(self):
-        if self._cal_mode == "frequency switching":
-            return (self.CAL_TEXT + "\n\nThis node uses frequency switching, so the reference "
-                    "is only used if you switch that off in Settings.")
-        return self.CAL_TEXT
-
-    def _set_cal_mode(self, mode):
-        label, text = self.CAL_MODES.get(mode, self.CAL_MODES["none"])
-        self._cal_mode = mode
-        self.lb_calm.setText(label)
-        self.b_calinfo.setToolTip(text)
-        self.lb_calm.setToolTip(text)
-
-    CAL_TEXT = ("Take one reference scan with either:\n\n"
-                "  a 50 ohm terminator on the LNA input in place of the antenna, or\n"
-                "  the dish on a cold patch of sky well away from the galactic plane.\n\n"
-                "The reference must not contain hydrogen, or it cancels the line you want "
-                "to see.")
-
-    def take_cal(self):
-        n = self.node()
-        if getattr(self, "_fs_search", False):
-            QMessageBox.information(
-                self, "Calibration", "This node uses frequency switching, so no calibration "
-                "is needed. To use a stored reference instead, switch frequency switching "
-                "off in Settings.")
-            return
-        if n.remote:
-            return self._take_cal_remote(n)
-        running = self.proc is not None and self.proc.state() != QProcess.NotRunning
-        verb = getattr(self, "_verb", None)
-        if running and verb == "cal":
-            return
-        other = None if running else lock.holder(self.cfg["state_dir"])
-        if running or other:
-            # an observer is running here (ours or another process): it takes the reference
-            # itself between blocks, so nothing is stopped or restarted
-            r = QMessageBox.question(
-                self, "Calibration", self._cal_text() + "\n\nObserving is running: the reference "
-                "is taken after the current block and observing carries on. Queue it now?")
-            if r != QMessageBox.Yes:
-                return
-            try:
-                d = (getattr(self, "_proc_dir", None) if running else None) or self.cfg["state_dir"]
-                p = os.path.join(d, "cal_request")
-                with open(p + ".tmp", "w") as f:
-                    f.write(str(int(time.time())))
-                os.replace(p + ".tmp", p)
-            except OSError as e:
-                QMessageBox.warning(self, "Calibration", f"Could not queue it: {e}")
-                return
-            self.sb.showMessage("Calibration queued; it runs after the current block.", 8000)
-            self.refresh(force=True)
-            return
-        r = QMessageBox.question(self, "Calibration",
-                                 self._cal_text() + "\n\nReady to record it now?")
-        if r != QMessageBox.Yes:
-            return
-        self.start("cal")
-
-    def _take_cal_remote(self, n):
-        if not n.token:
-            tok, ok = QInputDialog.getText(self, "Control token",
-                                           f"Control token for {n.name}:", QLineEdit.Password)
-            if not ok or not tok.strip():
-                return
-            n.token = tok.strip()
-            self._remember(n)
-        r = QMessageBox.question(
-            self, "Calibration", self._cal_text() + f"\n\nThe node {n.name} takes the reference "
-            "after its current block and keeps observing. Make sure the dish is on cold sky, "
-            "or someone at the dish has the terminator in place. Queue it now?")
-        if r != QMessageBox.Yes:
-            return
-        self.sb.showMessage(f"Asking {n.name} for a calibration...")
-        self._cal_call = self._call(n.request_cal, lambda r, n=n: self._cal_answer(n, r))
-
-    def _cal_answer(self, n, r):
-        ok, msg = (False, f"node unreachable: {r}") if isinstance(r, Exception) else r
-        if ok:
-            self.sb.showMessage(f"Calibration queued on {n.name}; it runs after the current "
-                                "block.", 8000)
-        else:
-            self.sb.clearMessage()
-            QMessageBox.warning(self, "Calibration", f"Not queued: {msg}.")
-            if "token" in msg:
-                n.token = ""
-                self._remember(n)
-        self.refresh(force=True)
-
     def _call(self, fn, on_done):
         """Run fn off the GUI thread, then on_done(result or exception) on it."""
         t = Call(fn)
@@ -2504,30 +2302,6 @@ class Main(QMainWindow):
         t = self.sender()
         if t in calls:
             calls.remove(t)
-
-    CAL_FILES = ("cal.dat", "cal.header", "cal_fine.dat", "cal_fine.header")
-
-    def delete_cal(self):
-        """Remove this computer's receiver reference; plots go back to raw from the next
-        scan. The previous reference kept as cal.prev.* is left alone."""
-        n = self.node()
-        if n.remote:
-            return
-        d = os.path.join(self.cfg["state_dir"], "hline")
-        have = [f for f in self.CAL_FILES if os.path.exists(os.path.join(d, f))]
-        if not have:
-            QMessageBox.information(self, "Calibration", "This node has no calibration.")
-            return
-        r = QMessageBox.question(
-            self, "Calibration", "Delete this node's receiver calibration? Scans show the "
-            "raw plot only until a new one is taken.")
-        if r != QMessageBox.Yes:
-            return
-        for f in have:
-            with contextlib.suppress(OSError):
-                os.remove(os.path.join(d, f))
-        self.sb.showMessage("Receiver calibration deleted.", 8000)
-        self.refresh(force=True)
 
     def _fill_recent(self):
         self.recent_menu.clear()
@@ -2567,14 +2341,6 @@ class Main(QMainWindow):
             QMessageBox.warning(self, "Connect to node", "No node answered at that address.")
             return
         n.name = idx.get("status", {}).get("name") or url
-        if idx.get("control"):
-            tok, ok2 = QInputDialog.getText(
-                self, "Control token",
-                f"{n.name} accepts calibration requests from the app.\n"
-                "Enter its control token (the api_token in the node's config),\n"
-                "or leave blank to view only:", QLineEdit.Password)
-            if ok2:
-                n.token = tok.strip()
         self.nodes.append(n)
         self._fill_nodes()
         self.node_box.setCurrentIndex(len(self.nodes) - 1)
@@ -2586,21 +2352,6 @@ class Main(QMainWindow):
         cfg["remote_nodes"] = saved + [{"name": n.name, "url": n.base, "token": n.token}]
         config.save(cfg, self.cfg_path)
         self.cfg["remote_nodes"] = cfg["remote_nodes"]
-
-    def set_token(self):
-        n = self.node()
-        if not n.remote:
-            QMessageBox.information(self, "Control token", "This computer's own node needs no "
-                                    "token. Set one in Settings so other computers can ask it "
-                                    "for a calibration.")
-            return
-        tok, ok = QInputDialog.getText(self, "Control token",
-                                       f"Control token for {n.name} (blank = view only):",
-                                       QLineEdit.Password, n.token)
-        if ok:
-            n.token = tok.strip()
-            self._remember(n)
-            self.refresh(force=True)
 
     def forget_node(self):
         n = self.node()

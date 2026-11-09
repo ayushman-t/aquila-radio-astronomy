@@ -239,14 +239,14 @@ def draw(fig, rows, title="", days=7, now=None, light=False, fig2=None):
     colors[:-1, :-1][broken] = (0.82, 0.82, 0.82, 1.0)
     X, Y = np.meshgrid(xf, vs, indexing="ij")
     ax._aquila_surface = (X, Y, Z, colors)
-    # Time runs across, as in the map beside it; like the sky frequency, low at the front,
-    # the receding (positive) velocities are nearest the viewer.
+    # Time runs across and velocity increases the same way as in the map beside it, so a
+    # feature sits at the same place in both when the view is turned flat.
     ax.view_init(elev=32, azim=-60)
     ax.set_xlabel("Time", labelpad=16)
     ax.set_ylabel("Velocity (km/s)", labelpad=8)
     ax.set_zlabel("dB", labelpad=4)
     ax.set_xlim(x[0], x[-1])
-    ax.set_ylim(v[-1], v[0])
+    ax.set_ylim(v[0], v[-1])
     ax.set_box_aspect((1.8, 1.0, 0.7))
     ax.set_zlim(lo, hi)
     ticks, fmt = _ticks(x[0], x[-1], 5)

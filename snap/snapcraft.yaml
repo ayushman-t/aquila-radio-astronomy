@@ -4,7 +4,7 @@ summary: Hydrogen line and narrowband SETI search with a dish and an SDR
 description: |
   This is a hydrogen line and narrowband SETI search software for a dish and an SDR. It works with Airspy, HydraSDR, RTL-SDR and HackRF, and both the hydrogen line and the search run together from the same SDR.
 
-  For the hydrogen line it makes a calibrated spectrum of every scan. The calibration uses frequency switching, so there is no need for a 50 ohm terminator or a cold sky reference, but those can be used too. Every scan is kept in a table with its peak and velocity, and any old scan can be viewed again. There is also a sky map showing where the dish beam is, and a 3D plot of the line over several days.
+  For the hydrogen line it makes a calibrated spectrum of every scan. The calibration uses frequency switching, so there is no need for a 50 ohm terminator or a cold sky reference. Every scan is kept in a table with its peak and velocity, and any old scan can be viewed again. There is also a sky map showing where the dish beam is, and a 3D plot of the line over several days.
 
   The narrowband search uses a fine FFT and a de-Doppler search in every block. Hits are listed with frequency, drift rate and SNR, with a waterfall plot. The search can be switched off to run hydrogen line only.
 

@@ -74,7 +74,7 @@ def test_fs_scan_end_to_end(tmp_path, monkeypatch):
     from aquila.sdr import Synthetic
     cfg = cfgmod.load(str(tmp_path / "c.json"))
     cfg.update(sdr="synthetic", sample_rate=2_400_000, state_dir=str(tmp_path / "s"))
-    cfg["hline"] = {"duration_s": 40, "fs_phase_s": 10, "freq_switch": True}
+    cfg["hline"] = {"duration_s": 40, "fs_phase_s": 10}
     cfg["save"]["plots"] = False
     src = Synthetic(cfg)
     src.rate = 2_400_000
@@ -161,7 +161,9 @@ def test_each_radio(tmp_path, model, rate):
     assert np.abs(m["spec_db"][dcv] - 10 * np.log10(sky)).max() < 0.01
 
 
-def test_switching_off_uses_plain_scans(tmp_path, monkeypatch):
+def test_old_switching_off_setting_is_ignored(tmp_path, monkeypatch):
+    """Frequency switching is the only mode: a config from before 0.2.16 that turned it
+    off still switches, and the status says so."""
     import json
 
     from aquila import config as cfgmod
@@ -170,12 +172,11 @@ def test_switching_off_uses_plain_scans(tmp_path, monkeypatch):
     cfg.update(sdr="synthetic", sample_rate=2_400_000, state_dir=str(tmp_path / "s"))
     cfg["hline"] = {"freq_switch": False}
     node = hline.HLine(cfg, source=Synthetic(cfg), log=lambda m: None)
-    monkeypatch.setattr(node, "fs_scan", lambda: pytest.fail("switched with the setting off"))
-    monkeypatch.setattr(hline, "observe", lambda *a, **k: False)
-    assert node.scan() is False
+    monkeypatch.setattr(node, "fs_scan", lambda: "switched")
+    assert node.scan() == "switched"
     node.status("capturing")
     st = json.load(open(tmp_path / "s" / "status.json"))
-    assert st["calibration"] == "none"
+    assert st["calibration"] == "frequency switching"
 
 
 class _PulsedRadio:
@@ -364,13 +365,13 @@ def test_map_first_scans_fill_the_plot(tmp_path):
 
 
 def test_search_frequency_switches_by_default_only_on_the_line():
-    """One switch for both modes: the search frequency switches unless it is switched
-    off, and never when its band does not hold the hydrogen line."""
+    """The search frequency switches, except when its band does not hold the hydrogen
+    line; the old freq_switch setting no longer turns it off."""
     from aquila.hline import fs_search_blocks
     cfg = {"center_mhz": 1420.0, "hline": {}}
     assert fs_search_blocks(cfg, 3e6) == 3
     assert fs_search_blocks({**cfg, "center_mhz": 1420.405}, 2.4e6) == 3
-    assert fs_search_blocks({**cfg, "hline": {"freq_switch": False}}, 3e6) == 0
+    assert fs_search_blocks({**cfg, "hline": {"freq_switch": False}}, 3e6) == 3
     assert fs_search_blocks({**cfg, "hline": {"fs_search_blocks": 0}}, 3e6) == 0
     assert fs_search_blocks({**cfg, "center_mhz": 1500.0}, 3e6) == 0
     assert fs_search_blocks({**cfg, "center_mhz": 11000.0}, 10e6) == 0
