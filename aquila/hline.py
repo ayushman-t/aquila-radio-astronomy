@@ -13,7 +13,7 @@ import time
 
 import numpy as np
 
-from . import config, map3d, sdr
+from . import config, lineview, map3d, sdr
 from .lock import acquire_lock, release_lock, watch_stop
 from .store import Store, replace
 
@@ -407,14 +407,6 @@ def plot_db(m, png, title="", smooth_kms=0.0):
         from scipy.ndimage import gaussian_filter1d
         s = gaussian_filter1d(s, smooth_kms / abs(v[1] - v[0]), mode="nearest")
     fig, ax = plt.subplots(figsize=(10, 5.2), dpi=100)
-    ax.axhspan(-m["rms_db"], m["rms_db"], color="0.85", lw=0, label="baseline noise (1 rms)")
-    ax.axhline(0.0, color="0.45", lw=0.8)
-    ax.plot(v, s, color="#1f5fa8", lw=1.2, label="calibrated spectrum")
-    ax.plot([m["kms"]], [m["db"]], "o", color="#c0392b", ms=6,
-            label=f"peak {m['db']:.3f} dB at {m['kms']:.0f} km/s")
-    ax.set_xlim(v.max(), v.min())            # approaching gas on the right, as frequency rises
-    ax.set_xlabel("Velocity (km/s, positive = receding)")
-    ax.set_ylabel("Power above baseline (dB)")
     note = f"noise {m['rms_db']:.4f} dB rms per channel"
     if m.get("n", 0) > 1:
         note += f"    median filter {m['n']} channels"
@@ -426,9 +418,7 @@ def plot_db(m, png, title="", smooth_kms=0.0):
     if m.get("quiet_pct", 100) < 90:
         extra.append(f"pulsed interference removed, {m['quiet_pct']:.0f}% of the time kept")
     lines = ([title] if title else []) + [note] + (["    ".join(extra)] if extra else [])
-    ax.set_title("\n".join(lines), fontsize=10)
-    ax.grid(alpha=0.3)
-    ax.legend(loc="upper left", fontsize=9, frameon=False)
+    lineview.line_axes(ax, v, s, m["rms_db"], m["kms"], m["db"], "\n".join(lines))
     fig.tight_layout()
     fig.savefig(png)
     plt.close(fig)

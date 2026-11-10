@@ -19,10 +19,11 @@ import urllib.error
 import urllib.request
 
 import numpy as np
-from PySide6.QtCore import QEvent, QProcess, QRectF, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QEvent, QProcess, QRectF, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
     QColor,
+    QFontMetrics,
     QImage,
     QPainter,
     QPixmap,
@@ -61,7 +62,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import __version__, autostart, config, lock, sdr, skymap
+from . import __version__, autostart, config, lineview, lock, sdr, skymap
 from .config import MIN_SETI_CHANNELS
 
 ICON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon-256.png")
@@ -139,9 +140,19 @@ class Poller(QThread):
         if self.want_block:
             jobs["sel_block"] = lambda: n.get(f"waterfalls/{self.want_block}.png", st)
         stage(jobs)
+        # a scan newer than the list: the list is fetched with it, once, so the plot, the
+        # banner and the list show the same scan
+        h, held = d.get("hist"), slow["scans"][1]
+        newest = float(h["t"].max()) if h is not None and h.size else 0.0
+        fresh = not slow_ok and newest > getattr(n, "scan_seen", 0.0)
+        if fresh:
+            n.scan_seen = newest
+            last = scan_unix(held[-1]) if held else None
+            fresh = last is None or newest > last + lineview.MATCH_S
         jobs = {}
-        if slow_ok:
+        if slow_ok or fresh:
             jobs["_scans"] = lambda: n.csv_rows("hline/scans.csv", st)
+        if slow_ok:
             jobs["_cands"] = lambda: n.csv_rows("candidates.csv", st)
             jobs["_blocks"] = lambda: self._blocks(n, idx, st)
         if self.running:
@@ -155,10 +166,17 @@ class Poller(QThread):
             with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
                 futs = {k: ex.submit(fn) for k, fn in jobs.items()}
                 d.update({k: f.result() for k, f in futs.items()})
-        if slow_ok and self.cancel:
+        if (slow_ok or fresh) and self.cancel:
+            d.pop("_scans", None)
             return d                        # abandoned: the cached tables stay as they were
+        if fresh:
+            scans = d.pop("_scans")
+            if scans[1]:
+                n.slow = dict(slow, scans=scans)
+                d["scans"] = scans
         if slow_ok:
             n.slow_at = time.time()
+            n.scan_seen = max(newest, getattr(n, "scan_seen", 0.0))
             blocks = d.pop("_blocks")
             n.slow = {"scans": d.pop("_scans"), "cands": d.pop("_cands"),
                       "blocks": blocks if blocks is not None else slow.get("blocks", ([], []))}
@@ -531,9 +549,27 @@ def stamp(utc, node_local=""):
     return ""
 
 
+def scan_unix(row):
+    """When a scans.csv row was written, as unix time. None when the row has no UTC."""
+    m = re.search(r"(\d{4})(\d{2})(\d{2})[T_](\d{2})(\d{2})(\d{2})",
+                  row[5] if row and len(row) > 5 else "")
+    return calendar.timegm(tuple(int(x) for x in m.groups()) + (0, 0, 0)) if m else None
+
+
+def node_tz(rows):
+    """The node's clock in seconds east of UTC, from its newest scan (which carries both
+    times). None when no scan does."""
+    for r in rows[::-1][:5]:
+        u = scan_unix(r)
+        m = re.match(r"(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})", r[0] if r else "")
+        if u is not None and m:
+            own = calendar.timegm(tuple(int(x) for x in m.groups()) + (0, 0, 0))
+            return int(round((own - u) / 900.0)) * 900
+    return None
+
+
 def scan_time(fname):
     """'obs_20260929_180926.dat' -> '2026-09-29 18:09:26' (the node's clock)."""
-    import re
     m = re.search(r"(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})", fname or "")
     return "{}-{}-{} {}:{}:{}".format(*m.groups()) if m else ""
 
@@ -565,6 +601,160 @@ class ImagePane(QLabel):
         if self._pm:
             pm = self._pm.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.setPixmap(pm)
+
+    def aspect(self, default):
+        """Width over height of the picture held, so a box can be cut to fit it."""
+        return self._pm.width() / max(1, self._pm.height()) if self._pm else default
+
+
+def _canvas():
+    """A plot that fills whatever box it is put in, or None without the plotting backend."""
+    try:
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+        from matplotlib.figure import Figure
+    except Exception:
+        return None
+    c = FigureCanvasQTAgg(Figure(dpi=100, layout="constrained"))
+    c.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+    c.setMinimumSize(120, 80)
+    return c
+
+
+class ElideLabel(QLabel):
+    """One line that shortens itself in the middle when there is not room for all of it."""
+
+    def minimumSizeHint(self):
+        return QSize(80, super().minimumSizeHint().height())
+
+    def paintEvent(self, e):
+        r = self.contentsRect()
+        text = self.fontMetrics().elidedText(self.text(), Qt.ElideMiddle, r.width())
+        QPainter(self).drawText(r, Qt.AlignLeft | Qt.AlignVCenter, text)
+
+
+class LinePane(QWidget):
+    """The calibrated line, drawn here at the size of its box from the row the node keeps
+    of each scan. Without that row (an older node, an older scan) it shows the picture
+    the node drew."""
+
+    def __init__(self, text):
+        super().__init__()
+        self.image = ImagePane(text)
+        self._stack = QStackedLayout(self)
+        self._stack.addWidget(self.image)
+        self.canvas = _canvas()
+        self._key = None
+        if self.canvas is not None:
+            self._stack.addWidget(self.canvas)
+
+    # the image pane's interface, so the window treats both panes alike
+    def set_data(self, data):
+        self.image.set_data(data)
+        if data is None:
+            self._stack.setCurrentWidget(self.image)
+
+    def setText(self, text):
+        self.image.setText(text)
+
+    def text(self):
+        return self.image.text()
+
+    def set_row(self, row, rms=0.0, kms=0.0, db=0.0, title=()):
+        """Draw a scan from its row. False, and the node's picture shows, when it cannot."""
+        ok = self.canvas is not None and row is not None
+        if ok:
+            key = (float(row["t"]), rms, kms, db, title)
+            if key != self._key:
+                ok = lineview.draw_line(self.canvas.figure, row["spec"], rms, kms, db, title)
+                self._key = key if ok else None
+                self.canvas.draw_idle()
+        self._stack.setCurrentWidget(self.canvas if ok else self.image)
+        return ok
+
+
+class DayPane(QWidget):
+    """The line over the last 24 h, velocity against time, from the node's scan rows."""
+    EMPTY = "Builds up as scans come in."
+
+    def __init__(self):
+        super().__init__()
+        self.note = QLabel(self.EMPTY)
+        self.note.setAlignment(Qt.AlignCenter)
+        self._stack = QStackedLayout(self)
+        self._stack.addWidget(self.note)
+        self.canvas = _canvas()
+        self._key = None
+        if self.canvas is not None:
+            self._stack.addWidget(self.canvas)
+
+    def set_rows(self, rows, tz_s=None, mark=None):
+        if self.canvas is None:
+            return
+        if rows is None or not rows.size:
+            self._key = None
+            self._stack.setCurrentWidget(self.note)
+            return
+        # the quarter hour is in the key: the 24 h keep moving when no scan comes in
+        key = (int(rows.size), float(rows["t"].max()), tz_s, mark, int(time.time() // 900))
+        if key == self._key:
+            return
+        self._key = key
+        ok = lineview.draw_day(self.canvas.figure, rows, tz_s, mark)
+        self.canvas.draw_idle()
+        self._stack.setCurrentWidget(self.canvas if ok else self.note)
+
+
+class LineBoard(QWidget):
+    """The Hydrogen line tab under its banner. Top: the line, and the sky map beside it.
+    Below: the last 24 h, virgo's raw picture, the scans. Each box is cut to what it
+    shows (the sky map is twice as wide as tall, virgo's picture keeps its shape) and the
+    drawn plots take the rest, so no box is left part empty at any window size."""
+    GAP = 6
+
+    def __init__(self, line, sky, day, raw, scans, sky_map, raw_pane, scans_width):
+        super().__init__()
+        self.line, self.sky, self.day, self.raw, self.scans = line, sky, day, raw, scans
+        self.sky_map, self.raw_pane, self.scans_width = sky_map, raw_pane, scans_width
+        for b in (line, sky, day, raw, scans):
+            b.setParent(self)
+        self.setMinimumSize(960, 480)             # below this the plots' labels do not fit
+
+    @staticmethod
+    def _chrome(box):
+        """What a group box adds around the widget in it: (width, height)."""
+        a, b = box.contentsMargins(), box.layout().contentsMargins()
+        return (a.left() + a.right() + b.left() + b.right(),
+                a.top() + a.bottom() + b.top() + b.bottom())
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.place()
+
+    def place(self):
+        W, H, g = self.width(), self.height(), self.GAP
+        # the sky map sets the top row: as tall as its map and the text under it need
+        cw, ch = self._chrome(self.sky)
+        ws = min(max(int(W * 0.39), 360), 860)
+        h1 = self.sky_map.height_for(ws - cw) + ch
+        most = int(H * 0.56)
+        if h1 > most:
+            ws, h1 = max(300, ws - 2 * (h1 - most)), most
+        h2 = H - h1 - g
+        both = not self.line.isHidden() and not self.raw.isHidden()
+        # with one of the two plots missing, the one there has the large box
+        (self.raw if self.line.isHidden() else self.line).setGeometry(0, 0, W - ws - g, h1)
+        self.sky.setGeometry(W - ws, 0, ws, h1)
+        wt = min(max(self.scans_width(W), 380), int(W * 0.48))
+        x = W - wt
+        self.scans.setGeometry(x, h1 + g, wt, h2)
+        if both:
+            cw, ch = self._chrome(self.raw)
+            wr = int((h2 - ch) * self.raw_pane.aspect(1.417)) + cw
+            title = self.raw.fontMetrics().horizontalAdvance(self.raw.title()) + 20
+            wr = max(160, title, min(wr, x - 2 * g - 300))
+            x -= g + wr
+            self.raw.setGeometry(x, h1 + g, wr, h2)
+        self.day.setGeometry(0, h1 + g, x - g, h2)
 
 
 class Map3DPane(QWidget):
@@ -784,9 +974,13 @@ class SkyMap(QWidget):
         self.plot.setMouseEnabled(False, False)
         self.plot.hideButtons()
         self.plot.getViewBox().disableAutoRange()
+        self.plot.setBackground("#1c1c1c")        # the sky is dark: no white frame round it
+        for side in ("left", "bottom"):
+            self.plot.getAxis(side).setPen("#8a8a8a")
+            self.plot.getAxis(side).setTextPen("#e0e0e0")
         self._full_sky()
-        ax = self.plot.getAxis("bottom")
-        ax.setTicks([[(-180 + 15 * h, f"{(12 - h) % 24}h") for h in range(0, 25, 3)]])
+        self._hours = 0
+        self._hour_ticks(3)
         self.plot.getAxis("left").setTicks([[(d, f"{d:+d}") for d in range(-60, 61, 30)]])
         self.img = pg.ImageItem()
         self.plot.addItem(self.img)
@@ -811,10 +1005,34 @@ class SkyMap(QWidget):
         self.info.setWordWrap(True)
         lay.addWidget(self.info)
         self.credit = QLabel("")
+        self.credit.setWordWrap(True)
         self.credit.setStyleSheet("color: #777;")
         lay.addWidget(self.credit)
         lay.addStretch(1)
         self._bg_done = False
+        self._name, self._at = "", (0.0, 0.0, 0.0)
+
+    def _place_label(self):
+        """The node's name by the beam: above it, or below near the top of the map, and
+        moved sideways as far as it takes to stay on the map."""
+        if not self._name:
+            return
+        x, y, bw = self._at
+        vb = self.plot.getViewBox()
+        (x0, x1), per_px = vb.viewRange()[0], 0.0
+        if vb.width() > 0:
+            per_px = (x1 - x0) / vb.width()
+        room = (x1 - x0) / per_px if per_px else 0.0
+        fm = QFontMetrics(self.label.textItem.font())
+        self.label.setText(fm.elidedText(self._name, Qt.ElideRight, int(room) - 8)
+                           if room > 40 else self._name)
+        w = (self.label.boundingRect().width() + 4) * per_px
+        a = 0.5
+        if w > 0:
+            a = min(max(0.5, 1.0 - (x1 - x) / w), max(0.0, (x - x0) / w))
+        up = y + bw / 2 < 60
+        self.label.setAnchor((a, 1.2 if up else -0.2))
+        self.label.setPos(x, y + bw / 2 if up else y - bw / 2)
 
     @staticmethod
     def _x(ra_deg):
@@ -823,11 +1041,36 @@ class SkyMap(QWidget):
     def _full_sky(self):
         self.plot.getViewBox().setRange(xRange=(-180, 180), yRange=(-90, 90), padding=0)
 
+    def _hour_ticks(self, step):
+        """Right ascension labels every `step` hours."""
+        if step != self._hours:
+            self._hours = step
+            self.plot.getAxis("bottom").setTicks(
+                [[(-180 + 15 * h, f"{(12 - h) % 24}h") for h in range(0, 25, step)]])
+
+    def _text_h(self, w):
+        """Height of the text under the map, at this width."""
+        return (self.info.heightForWidth(w) + self.credit.heightForWidth(w)
+                + 3 * self.layout().spacing())
+
+    def height_for(self, w):
+        """The height at which the map fills this width, with its text under it."""
+        return w // 2 + 44 + self._text_h(w)
+
+    def _resized(self):
+        self._full_sky()
+        self._place_label()
+
     def resizeEvent(self, e):
-        QTimer.singleShot(0, self._full_sky)
+        QTimer.singleShot(0, self._resized)
         want = self.width() // 2 + 44
-        room = self.height() - self.info.sizeHint().height() - self.credit.sizeHint().height() - 12
-        self.plot.setFixedHeight(max(120, min(want, room)))
+        room = self.height() - self._text_h(self.width())
+        high = max(120, min(want, room))
+        self.plot.setFixedHeight(high)
+        # a small map has no room for a label every 3 h
+        per_h = min((self.width() - 50) / 24.0, (high - 44) / 12.0)
+        self._hour_ticks(3 if 3 * per_h >= 1.5 * self.fontMetrics().horizontalAdvance("21h")
+                         else 6)
         super().resizeEvent(e)
 
     def load_background(self):
@@ -854,6 +1097,7 @@ class SkyMap(QWidget):
             self.cross.setData([], [])
             self.beam.setRect(0, 0, 0, 0)
             self.label.setText("")
+            self._name = ""
             self.info.setText("Set the site location in Settings to see where the dish points.")
             return
         x, y = float(self._x(pt["ra_deg"])), pt["dec_deg"]
@@ -861,13 +1105,16 @@ class SkyMap(QWidget):
         wid = bw / max(math.cos(math.radians(y)), 0.2)
         self.beam.setRect(x - wid / 2, y - bw / 2, wid, bw)
         self.cross.setData([x], [y])
-        self.label.setText(name)
-        self.label.setPos(x, y + bw / 2)
-        when = time.strftime("scan %Y-%m-%d %H:%M UTC     ", time.gmtime(t_unix)) if t_unix else ""
-        self.info.setText(
-            when + f"Az {pt['az']:.1f}  El {pt['el']:.1f}     RA {pt['ra_deg'] / 15:.2f} h  "
-            f"Dec {pt['dec_deg']:+.1f}     Galactic l {pt['l']:.1f}  b {pt['b']:+.1f}     "
-            f"LST {pt['lst_h']:.2f} h     beam {pt['beam_deg']:.1f} deg")
+        self._name, self._at = name, (x, y, bw)
+        self._place_label()
+        parts = [time.strftime("scan %Y-%m-%d %H:%M UTC", time.gmtime(t_unix))] if t_unix else []
+        parts += [f"Az {pt['az']:.1f}  El {pt['el']:.1f}",
+                  f"RA {pt['ra_deg'] / 15:.2f} h  Dec {pt['dec_deg']:+.1f}",
+                  f"Galactic l {pt['l']:.1f}  b {pt['b']:+.1f}",
+                  f"LST {pt['lst_h']:.2f} h", f"beam {pt['beam_deg']:.1f} deg"]
+        # a narrow box wraps the line between two of these, never inside one
+        nb = "\u00a0"
+        self.info.setText((nb * 4 + " ").join(q.replace(" ", nb) for q in parts))
 
 
 class Settings(QDialog):
@@ -1536,6 +1783,7 @@ class Main(QMainWindow):
                      self.c_thumb):
             pane.set_data(None)
             pane.setText("Loading...")
+        self.hl_day.set_rows(None)
         for m in (self.hl_model, self.sv_model, self.c_model):
             m.removeRows(0, m.rowCount())
         for k in self.st:
@@ -1614,51 +1862,32 @@ class Main(QMainWindow):
         self.sv_tab = tabs.addTab(svw, "Narrowband search")
 
         # Hydrogen line
-        w = QSplitter(Qt.Vertical)
-        topw = QWidget()
-        topv = QVBoxLayout(topw)
-        topv.setContentsMargins(0, 0, 0, 0)
+        w = QWidget()
+        col = QVBoxLayout(w)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(LineBoard.GAP)
         self.hl_banner, self.hl_live, row = self._banner(lambda: self.view_scan(None))
-        topv.addLayout(row)
-        # both plots side by side (frequency switched in dB, virgo's raw), the sky map narrower
-        hdr = QHBoxLayout()
-        self.lb_raw = QLabel("")
-        self.lb_raw.setStyleSheet("font-weight: bold")
-        hdr.addWidget(self.lb_raw)
-        hdr.addStretch(1)
-        topv.addLayout(hdr)
-        top = QHBoxLayout()
-        top.setContentsMargins(0, 0, 0, 0)
-        topv.addLayout(top, 1)
-        self.hl_cal = ImagePane("No plot yet. A scan takes about 5 minutes.")
+        col.addLayout(row)
+
+        def box(title, inner):
+            gb = QGroupBox(title)
+            lay = QVBoxLayout(gb)
+            lay.setContentsMargins(2, 2, 2, 2)
+            lay.addWidget(inner)
+            return gb
+        self.hl_cal = LinePane("No plot yet. A scan takes about 5 minutes.")
         self.hl_raw = ImagePane("No scan yet.")
-        self.gb_cal = QGroupBox("Frequency switched, power above baseline (dB)")
-        lay_c = QVBoxLayout(self.gb_cal)
-        lay_c.setContentsMargins(2, 2, 2, 2)
-        lay_c.addWidget(self.hl_cal)
-        top.addWidget(self.gb_cal, 3)
-        self.gb_raw = QGroupBox("Uncalibrated (virgo, raw)")
-        lay_r = QVBoxLayout(self.gb_raw)
-        lay_r.setContentsMargins(2, 2, 2, 2)
-        lay_r.addWidget(self.hl_raw, 1)
-        top.addWidget(self.gb_raw, 3)
-        w.addWidget(topw)
-        botw = QWidget()
-        bottom = QHBoxLayout(botw)
-        bottom.setContentsMargins(0, 0, 0, 0)
+        self.hl_day = DayPane()
         self.sky = SkyMap()
-        self.gb_sky = QGroupBox("Sky")
-        QVBoxLayout(self.gb_sky).addWidget(self.sky)
-        bottom.addWidget(self.gb_sky, 1)
-        self.hl_top, self.hl_bottom = top, bottom
+        self.gb_cal = box("Frequency switched, power above baseline (dB)", self.hl_cal)
+        self.gb_raw = box("Uncalibrated (virgo, raw)", self.hl_raw)
+        self.gb_sky = box("Sky", self.sky)
         self.hl_table, self.hl_model = self._scan_table(self.view_scan, self.download_scan)
         gb = QGroupBox("Scans")
         QVBoxLayout(gb).addWidget(self.hl_table)
-        bottom.addWidget(gb, 1)
-        w.addWidget(botw)
-        w.setSizes([560, 260])
-        w.setStretchFactor(0, 3)
-        w.setStretchFactor(1, 1)
+        self.hl_board = LineBoard(self.gb_cal, self.gb_sky, box("Last 24 h", self.hl_day),
+                                  self.gb_raw, gb, self.sky, self.hl_raw, self._scans_width)
+        col.addWidget(self.hl_board, 1)
         self.hl_tab = tabs.addTab(w, "Hydrogen line")
         self.map_pane = Map3DPane(self.MAP_EMPTY)
         self.map_pane.log = lambda m: self.log.appendPlainText(
@@ -1716,7 +1945,7 @@ class Main(QMainWindow):
         if getattr(self, "sb", None) is not None:
             return                    # called again after Settings: the bar is built once
         self.sb = self.statusBar()
-        self.sb_label = QLabel("")
+        self.sb_label = ElideLabel()
         self.sb.addPermanentWidget(self.sb_label)
         self.sb.addPermanentWidget(QLabel("   Ayushman Tripathi, www.radioastronomy.in   "))
 
@@ -1769,6 +1998,18 @@ class Main(QMainWindow):
         d_dl.clicked.connect(lambda r, c: on_download(model.item(r, 1).text()))
         view.setProperty("delegates", (d_view, d_dl))      # keep them alive
         return view, model
+
+    def _scans_width(self, board_w):
+        """The width the scan list needs to show its columns whole. A narrow window
+        drops the noise column, a narrower one the velocity."""
+        t = self.hl_table
+        if not self.hl_model.columnCount():
+            return 0
+        t.setColumnHidden(5, board_w < 1500)
+        t.setColumnHidden(4, board_w < 1300)
+        gb = t.parentWidget()
+        return (t.horizontalHeader().length() + t.verticalScrollBar().sizeHint().width()
+                + 2 * t.frameWidth() + LineBoard._chrome(gb)[0] + 2)
 
     def _fill_scan_table(self, view, model, headers, rows):
         """Rows get View and Download cells appended; the key is always column 1."""
@@ -1940,6 +2181,7 @@ class Main(QMainWindow):
         if dish_scan:
             view["dish"] = dict(view["dish"], **dish_scan)
         self.sky.update_pointing(view, n.name if n.remote else self.cfg["name"], t_scan)
+        self.hl_board.place()                # the text under the map may take another line
         # 7: the log tab mirrors survey.log (local file, or the node's tail endpoint while
         # the tab is open); a child started from here appends its own output live instead
         if not running and d["log"]:
@@ -2000,23 +2242,22 @@ class Main(QMainWindow):
             when = stamp(row[5] if len(row) > 5 else "", scan_time(row[1]))
         elif sel:
             when = scan_time(sel)
+        hist = d.get("hist")
         self.hl_cal.set_data(cal)
+        drawn = self._draw_scan(hist, row)
         self.hl_raw.set_data(raw)
+        # a scan picked from the list is pointed out in the 24 h
+        self.hl_day.set_rows(hist, node_tz(rows), scan_unix(row) if sel and row else None)
         self.map_pane.set_data(d.get("map3d"))
-        self.map_pane.set_rows(d.get("hist"), self.node().name)
+        self.map_pane.set_rows(hist, self.node().name)
         if sel and "sel_raw" in d:
             self._set_live(self.hl_banner, self.hl_live, False,
                            f"scan {when}{self._hdr_summary(d.get('sel_hdr'))}")
         else:
             self._set_live(self.hl_banner, self.hl_live, True,
                            f"latest scan {when}" if when else "")
-        self.gb_cal.setVisible(bool(cal) or not raw)
-        self.gb_raw.setVisible(bool(raw) or not cal)
-        # the sky map sits beside the plots, narrower; the scan list has the full width below
-        if not getattr(self, "_sky_top", False):
-            self._sky_top = True
-            self.hl_top.addWidget(self.gb_sky, 2)
-        self.lb_raw.setText(f"Scan {when}" if when else "")
+        self.gb_cal.setVisible(bool(cal) or drawn or not raw)
+        self.gb_raw.setVisible(bool(raw) or not (cal or drawn))
         if head and rows != getattr(self, "_hl_rows", None):
             self._hl_rows = rows
             self._fill_scan_table(
@@ -2025,6 +2266,29 @@ class Main(QMainWindow):
                  "Noise (dB rms)", "Calibrated"],
                 [[q[0], q[1], q[6], q[2], q[3], q[7], "yes" if q[4] == "1" else "no"]
                  for q in ((r + [""] * 9)[:9] for r in rows[::-1] if len(r) > 1)])
+            # the board gives the list the width of its columns, so none of them stretches;
+            # the file name stays in the model (it is the key) but is not shown
+            self.hl_table.horizontalHeader().setSectionResizeMode(
+                0, QHeaderView.ResizeToContents)
+            for c in (1, 3, 6):
+                self.hl_table.setColumnHidden(c, True)
+        self.hl_board.place()
+
+    def _draw_scan(self, hist, row):
+        """Draw the scan of this scans.csv row from its history row. False when the row
+        or its numbers are not there: the node's own picture is shown then."""
+        r = lineview.row_at(hist, scan_unix(row)) if row else None
+        try:
+            db, kms, rms = float(row[6]), float(row[3]), float(row[7])
+        except (IndexError, TypeError, ValueError):
+            r = None
+        if r is None:
+            return self.hl_cal.set_row(None)
+        n = self.node()
+        return self.hl_cal.set_row(
+            r, rms, kms, db,
+            (n.name if n.remote else self.cfg["name"], f"scan {scan_time(row[1])}",
+             f"noise {rms:.4f} dB rms per channel"))
 
     @staticmethod
     def _hdr_dict(b):
@@ -2043,9 +2307,7 @@ class Main(QMainWindow):
         t = None
         for r in d["scans"][1]:
             if len(r) > 5 and r[1].replace(".dat", "") == sel:
-                m = re.search(r"(\d{4})(\d{2})(\d{2})[T_](\d{2})(\d{2})(\d{2})", r[5])
-                if m:
-                    t = calendar.timegm(tuple(int(x) for x in m.groups()) + (0, 0, 0))
+                t = scan_unix(r)
                 break
         h = self._hdr_dict(d.get("sel_hdr"))
         if t is None and h.get("mjd"):                      # scans from before the utc column

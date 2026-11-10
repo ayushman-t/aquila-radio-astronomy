@@ -1,3 +1,12 @@
+aquila-radio-astronomy (0.2.17) unstable; urgency=medium
+
+  * Hydrogen line tab laid out again: the calibrated line and the sky map on top, the
+    last 24 h of the line as velocity against time, the raw plot and the scan list
+    below. The line is drawn in the app, so it fills its box at any window size.
+  * A remote node's scan list follows a new scan at once instead of within 10 minutes.
+
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Tue, 10 Nov 2026 17:48:57 -0500
+
 aquila-radio-astronomy (0.2.16) unstable; urgency=medium
 
   * Frequency switching is the only hydrogen line calibration: the checkbox, the
