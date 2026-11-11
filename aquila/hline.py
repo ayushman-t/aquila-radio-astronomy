@@ -321,8 +321,13 @@ def _flat_band(R, off_hz, bw):
     return valid
 
 
-def measure_fs(sig_dat, ref_dat, obs, h):
-    """Frequency switched spectrum, reduced the standard way.
+# the line window never narrows below this: closer in, the baseline would sit on the line
+FS_MIN_WINDOW_KMS = 80.0
+
+
+def measure_fs(sig_dat, ref_dat, obs, h, why=None):
+    """Frequency switched spectrum, reduced the standard way. None when the scan cannot
+    be measured; the reason is then appended to the list why, when one is given.
 
     S is taken with the line in the band, R with the receiver retuned by the throw,
     so R sees only line free sky. In the same receiver channel both see the same
@@ -370,11 +375,26 @@ def measure_fs(sig_dat, ref_dat, obs, h):
     # away on broad structure under the line and the peak then depends on it
     # a line fitted from one side only swings freely across the other, so the window
     # narrows until the band has baseline on both sides of the line
-    while win > 120 and min((valid & (v > win)).sum(), (valid & (v < -win)).sum()) < 30:
+    def sides(w):
+        return min((valid & (v > w)).sum(), (valid & (v < -w)).sum())
+    while win > 120 and sides(win) < 30:
         win -= 10
+    if sides(win) < 30:
+        # a receiver whose flat band is narrower than its rate suggests (an Airspy R2 at
+        # 2.5 Msps: 1.25 MHz) has no room for that window. A narrower one, with baseline
+        # on both sides, still measures the line; broad wings are then partly fitted away
+        narrow = win
+        while narrow > FS_MIN_WINDOW_KMS and sides(narrow) < 30:
+            narrow -= 10
+        if sides(narrow) >= 30:
+            win = narrow
     line = valid & (np.abs(v) < win)
     fit = valid & ~line
     if fit.sum() < 60:
+        if why is not None:
+            why.append(f"the flat part of the receiver band, {valid.sum() * chw / 1e6:.2f} MHz "
+                       f"at {bw / 1e6:g} Msps, is too narrow for a baseline beside the line. "
+                       "Use a higher sample rate")
         return None
     # divide, not subtract: the line is then relative to the continuum under it
     res = (1.0 + xs) / (1.0 + np.polyval(np.polyfit(x[fit], xs[fit], 1), x)) - 1.0
@@ -382,6 +402,8 @@ def measure_fs(sig_dat, ref_dat, obs, h):
     sm = median_filter(res, size=n, mode="nearest") if n > 1 else res
     ipk = int(np.argmax(np.where(line, sm, -1e9)))
     if not line[ipk]:
+        if why is not None:
+            why.append("the hydrogen line is outside the flat part of the receiver band")
         return None
     m = _result(sm, v, valid, fit, ipk, unsmoothed=res)
     m["n"] = n
@@ -705,9 +727,10 @@ class HLine:
         plots = save.get("plots", True)
         usable_cal, why = (True, "") if ref else self.cal_usable(obs)
         meas = None
+        no_meas = []
         try:
             if ref:
-                meas = measure_fs(dat, ref, obs, self.h)
+                meas = measure_fs(dat, ref, obs, self.h, no_meas)
                 if meas is not None:
                     meas["method"] = "frequency switched"
             else:
@@ -772,7 +795,7 @@ class HLine:
                             time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()),
                             num("db", "{:.3f}"), num("rms_db", "{:.4f}")])
         if meas is None:
-            self.log(f"scan {stamp}: no line measurement")
+            self.log(f"scan {stamp}: no line measurement" + (f", {no_meas[0]}" if no_meas else ""))
         elif usable_cal:
             self.log(f"scan {stamp}: {meas['method']} peak {meas['db']:.3f} dB "
                      f"({meas['pct']:.2f}%) at {meas['kms']:.0f} km/s, "

@@ -50,6 +50,56 @@ def test_line_height_independent_of_receiver(tmp_path, rate):
     assert m["rms_db"] < 0.005
 
 
+def _narrow_scan(tmp_path, flat, rate=2_500_000, peak=0.25, noise=2e-3, seed=0):
+    """A receiver flat only to +-flat of its rate, with steep shoulders, as an Airspy R2
+    is at 2.5 Msps, and a line with gas out to about -100 km/s."""
+    rng = np.random.default_rng(seed)
+    chans = 1024
+    f_sig, f_ref = hline.fs_tunings(hline.DEFAULTS, rate)
+    off = (np.arange(chans) - chans / 2.0) * rate / chans
+    x = np.abs(off) / rate
+    band = 10 ** (-np.clip(x - flat, 0, None) * 150 / 10) * (1 + 0.02 * np.sin(2 * np.pi * x * 5))
+
+    def sky(f):
+        v = 299792.458 * (F0 - f) / F0
+        return 1.0 + peak * (np.exp(-0.5 * ((v - 3.0) / 12.0) ** 2)
+                             + 0.25 * np.exp(-0.5 * ((v + 45.0) / 25.0) ** 2))
+    out = {}
+    for name, fc in (("sig", f_sig), ("ref", f_ref)):
+        rows = band * sky(fc + off) * (1 + noise * rng.standard_normal((150, chans)))
+        path = tmp_path / f"{name}.dat"
+        rows.astype(np.float32).tofile(path)
+        out[name] = str(path)
+    obs = {"frequency": f_sig, "bandwidth": rate, "channels": chans,
+           "fs_throw_hz": f_ref - f_sig}
+    return out, obs, float(10 * np.log10(sky(f_sig + off).max()))
+
+
+def test_narrow_receiver_band_still_gives_a_line(tmp_path):
+    # the flat band is half the sample rate: the usual window leaves no baseline on one
+    # side of the line, and every scan used to come back with no measurement at all
+    files, obs, truth = _narrow_scan(tmp_path, 0.25)
+    why = []
+    m = hline.measure_fs(files["sig"], files["ref"], obs, dict(hline.DEFAULTS), why)
+    assert m is not None and not why
+    assert hline.FS_MIN_WINDOW_KMS <= m["line_kms"][0] < 120
+    assert m["db"] == pytest.approx(truth, abs=0.05)
+    assert m["kms"] == pytest.approx(3.0, abs=3.0)
+
+
+def test_too_narrow_a_band_says_why(tmp_path):
+    files, obs, _ = _narrow_scan(tmp_path, 0.12)
+    why = []
+    assert hline.measure_fs(files["sig"], files["ref"], obs, dict(hline.DEFAULTS), why) is None
+    assert why and "higher sample rate" in why[0]
+
+
+def test_wide_band_keeps_the_usual_window(tmp_path):
+    files, obs = _scan(tmp_path, 3_000_000)
+    m = hline.measure_fs(files["sig"], files["ref"], obs, dict(hline.DEFAULTS))
+    assert m["line_kms"][0] >= 120
+
+
 def test_weak_line(tmp_path):
     files, obs = _scan(tmp_path, 6_000_000, peak=0.004, wing=0.0)
     m = hline.measure_fs(files["sig"], files["ref"], obs, dict(hline.DEFAULTS))
