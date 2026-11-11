@@ -1,3 +1,10 @@
+aquila-radio-astronomy (0.2.18) unstable; urgency=medium
+
+  * Hydrogen line tab: the banner and the plot title show a scan under the same time
+    as the scan list, the time it ended. They showed the time it began.
+
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Tue, 10 Nov 2026 21:00:17 -0500
+
 aquila-radio-astronomy (0.2.17) unstable; urgency=medium
 
   * Hydrogen line tab laid out again: the calibrated line and the sky map on top, the

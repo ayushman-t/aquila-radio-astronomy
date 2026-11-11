@@ -574,6 +574,14 @@ def scan_time(fname):
     return "{}-{}-{} {}:{}:{}".format(*m.groups()) if m else ""
 
 
+def scan_when(row):
+    """The time a scan is known by everywhere: the one in the list, when it ended, on the
+    node's clock. (Its file is named for when it began.)"""
+    if row and re.fullmatch(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d", row[0].strip()):
+        return row[0].strip()
+    return scan_time(row[1]) if row and len(row) > 1 else ""
+
+
 class ImagePane(QLabel):
     def __init__(self, text):
         super().__init__(text)
@@ -2239,7 +2247,7 @@ class Main(QMainWindow):
             row = rows[-1] if rows else None
         when = ""
         if row:
-            when = stamp(row[5] if len(row) > 5 else "", scan_time(row[1]))
+            when = stamp(row[5] if len(row) > 5 else "", scan_when(row))
         elif sel:
             when = scan_time(sel)
         hist = d.get("hist")
@@ -2287,7 +2295,7 @@ class Main(QMainWindow):
         n = self.node()
         return self.hl_cal.set_row(
             r, rms, kms, db,
-            (n.name if n.remote else self.cfg["name"], f"scan {scan_time(row[1])}",
+            (n.name if n.remote else self.cfg["name"], f"scan {scan_when(row)}",
              f"noise {rms:.4f} dB rms per channel"))
 
     @staticmethod
@@ -2438,7 +2446,8 @@ class Main(QMainWindow):
         self.refresh(force=True)
 
     def download_scan(self, key):
-        self._download("hline", key.replace(".dat", ""), f"scan {scan_time(key)}")
+        row = next((r for r in self._hl_rows or [] if r[1] == key), None)
+        self._download("hline", key.replace(".dat", ""), f"scan {scan_when(row) or scan_time(key)}")
 
     def download_block(self, key):
         self._download("block", key, f"block {stamp(key)}")

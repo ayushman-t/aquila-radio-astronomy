@@ -19,6 +19,18 @@ def test_scan_times_from_a_scans_row():
     assert gui.node_tz([row[:5]]) is None and gui.node_tz([]) is None
 
 
+def test_a_scan_has_one_time_the_one_in_the_list():
+    row = ["2026-11-11 07:11:53", "obs_20261111_070640.dat", "6.45", "-17.6", "1",
+           "20261111T014153Z", "0.271", "0.0313"]
+    assert gui.scan_when(row) == "2026-11-11 07:11:53"
+    # the banner's two clocks are the same moment
+    assert (gui.stamp(row[5], gui.scan_when(row))
+            == "2026-11-11 07:11:53 node time (01:41:53 UTC)")
+    # a row with no time of its own falls back to the file's
+    assert gui.scan_when(["", "obs_20261111_070640.dat"]) == "2026-11-11 07:06:40"
+    assert gui.scan_when(None) == ""
+
+
 class _Sky(QWidget):
     def height_for(self, w):
         return w // 2 + 44 + 60
