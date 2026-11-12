@@ -21,9 +21,11 @@ def parse(addr):
     if not host:
         host, port = port, "4533"
     try:
-        return host.strip("[]"), int(port)
+        port = int(port)
     except ValueError:
         return None
+    # a port no socket takes is an error of its own kind on some systems: not tried
+    return (host.strip("[]"), port) if 0 < port < 65536 else None
 
 
 def read(addr, timeout=2.0):

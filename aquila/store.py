@@ -24,6 +24,20 @@ def replace(src, dst, tries=10):
             time.sleep(0.2)
 
 
+def end_row(path):
+    """A table whose last row was cut short by a crash or power cut: that row is ended
+    here, so the next row written is not joined to it and lost."""
+    try:
+        with open(path, "r+b") as f:
+            if f.seek(0, os.SEEK_END):
+                f.seek(-1, os.SEEK_END)
+                if f.read(1) != b"\n":
+                    f.seek(0, os.SEEK_END)
+                    f.write(b"\n")
+    except OSError:
+        pass
+
+
 def _by_age(paths):
     """Oldest first. A file deleted between the glob and the stat is skipped."""
     aged = []
@@ -93,6 +107,7 @@ class Store:
     def append_hits(self, hits, block, path):
         # a power cut can leave the file created but empty: it still needs its header
         new = not os.path.exists(path) or os.path.getsize(path) == 0
+        end_row(path)
         with open(path, "a") as f:
             if new:
                 f.write("utc,local,sky_freq_hz,drift_hz_s,snr,width_hz,coverage,thumb,sdr\n")
@@ -107,6 +122,7 @@ class Store:
         """One row per block so the app can list them like hydrogen-line scans.
         Bounded to the last 2000 rows (about 150 KB), same as scans.csv."""
         new = not os.path.exists(self.blocks) or os.path.getsize(self.blocks) == 0
+        end_row(self.blocks)
         with open(self.blocks, "a") as f:
             if new:
                 f.write("utc,local,thumb,hits,carriers,top_snr,center_hz\n")
@@ -115,8 +131,9 @@ class Store:
                 top_snr, block["center_hz"]))
         try:
             if os.path.getsize(self.blocks) > 200_000:
-                lines = open(self.blocks).readlines()
-                with open(self.blocks + ".tmp", "w") as f:
+                with open(self.blocks, "rb") as f:      # bytes: a damaged row cannot stop it
+                    lines = f.readlines()
+                with open(self.blocks + ".tmp", "wb") as f:
                     f.writelines(lines[:1] + lines[-2000:])
                 replace(self.blocks + ".tmp", self.blocks)
         except OSError:
@@ -124,7 +141,7 @@ class Store:
 
     def count_hits(self):
         try:
-            with open(self.hits) as f:
+            with open(self.hits, "rb") as f:
                 return max(0, sum(1 for _ in f) - 1)
         except OSError:
             return 0
@@ -166,9 +183,9 @@ class Store:
         for p in (self.hits, self.rfi):
             try:
                 if os.path.exists(p) and os.path.getsize(p) > csv_cap:
-                    with open(p) as f:
+                    with open(p, "rb") as f:
                         lines = f.readlines()
-                    with open(p + ".tmp", "w") as f:
+                    with open(p + ".tmp", "wb") as f:
                         f.writelines(lines[:1] + lines[-keep_rows:])
                     replace(p + ".tmp", p)
             except OSError:

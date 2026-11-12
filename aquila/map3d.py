@@ -22,11 +22,40 @@ V_SHOW = 150.0
 
 def binned(v, db):
     """A scan's spectrum on the fixed velocity grid, so scans at any rate or tuning line up."""
-    ok = np.isfinite(db)
+    ok = np.isfinite(db) & np.isfinite(v)
     n, _ = np.histogram(v[ok], V_EDGES)
     s, _ = np.histogram(v[ok], V_EDGES, weights=db[ok])
     with np.errstate(invalid="ignore", divide="ignore"):
-        return np.where(n > 0, s / n, np.nan).astype(np.float32)
+        out = np.where(n > 0, s / n, np.nan)
+    # at 10 Msps and up a channel is wider than a bin, so some bins get no channel: those
+    # take the value between the two channels either side. A hole in the data stays a hole.
+    if v.size > 2 and ok.sum() > 1:
+        chan = float(np.median(np.abs(np.diff(v))))
+        order = np.argsort(v[ok])
+        vs, ds = v[ok][order], db[ok][order]
+        empty = np.where((n == 0) & (vs[0] < V_MID) & (vs[-1] > V_MID))[0]
+        if chan > V_EDGES[1] - V_EDGES[0] and empty.size:
+            j = np.searchsorted(vs, V_MID[empty])
+            near = (vs[j] - vs[j - 1]) <= 1.5 * chan
+            out[empty[near]] = np.interp(V_MID[empty[near]], vs, ds)
+    return out.astype(np.float32)
+
+
+def bridge(z, t0, step, rows, cols=slice(None)):
+    """Scans that take longer than one time bin leave bins that no scan ended in. Such a
+    bin, between two scans that followed one another, shows the scan recorded across it.
+    A break in observing stays empty."""
+    if rows.size < 3:
+        return
+    order = np.argsort(rows["t"])
+    ts = rows["t"][order]
+    usual = float(np.median(np.diff(ts)))
+    if usual <= step:
+        return
+    for i in np.where(~np.isfinite(z).any(axis=1))[0]:
+        j = int(np.searchsorted(ts, t0 + (i + 1) * step))     # the first scan to end after it
+        if 0 < j < ts.size and ts[j] - ts[j - 1] <= 1.5 * usual:
+            z[i] = rows["spec"][order[j]][cols]
 
 
 def append(hdir, t, v, db):
@@ -107,6 +136,7 @@ def grid(rows, days, now=None):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)     # a velocity with no data
             z[i] = np.nanmedian(rows["spec"][idx == i], axis=0)
+    bridge(z, t0, step, rows)
     have = np.isfinite(rows["spec"]).mean(0) > 0.5
     if not have.any():
         return None

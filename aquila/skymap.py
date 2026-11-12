@@ -101,13 +101,21 @@ def background():
 
 
 def pointing(cfg, t_unix):
-    """Everything the map needs for the dish right now, or None without a site."""
+    """Everything the map needs for the dish right now, or None without a site (or with a
+    site or pointing that is no number: another node's status can hold anything)."""
     site = cfg.get("site") or {}
     if site.get("lat") is None or site.get("lon") is None:
         return None
-    az, el = float(cfg["dish"]["az"]), float(cfg["dish"]["el"])
-    ra, dec = altaz_to_radec(az, el, float(site["lat"]), float(site["lon"]), t_unix)
+    try:
+        az, el = float(cfg["dish"]["az"]), float(cfg["dish"]["el"])
+        at = az, el, float(site["lat"]), float(site["lon"])
+        beam = beam_deg(cfg["dish"].get("diameter_m"), cfg["center_mhz"] * 1e6)
+    except (KeyError, TypeError, ValueError, ArithmeticError):
+        return None
+    if not all(math.isfinite(v) for v in at + (beam,)):
+        return None
+    ra, dec = altaz_to_radec(*at, t_unix)
     gl, gb = radec_to_galactic(ra, dec)
     return {"az": az, "el": el, "ra_deg": ra, "dec_deg": dec, "l": gl, "b": gb,
             "lst_h": lst_hours(t_unix, float(site["lon"])),
-            "beam_deg": beam_deg(cfg["dish"].get("diameter_m"), cfg["center_mhz"] * 1e6)}
+            "beam_deg": beam}

@@ -6,7 +6,7 @@ import warnings
 
 import numpy as np
 
-from .map3d import MIN_ROWS, V_MID, V_SHOW
+from .map3d import MIN_ROWS, V_MID, V_SHOW, bridge
 
 DAY_S = 86400.0
 DAY_BINS = 96               # 15 minutes each
@@ -85,6 +85,7 @@ def day_grid(rows, end=None):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)     # a velocity with no data
             z[i] = np.nanmedian(rows["spec"][idx == i][:, keep], axis=0)
+    bridge(z, t0, step, rows, keep)
     if not np.isfinite(z).any():
         return None
     return t0 + step * np.arange(DAY_BINS + 1), V_MID[keep], z

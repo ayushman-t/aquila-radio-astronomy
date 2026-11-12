@@ -1,13 +1,23 @@
 """The Hydrogen line tab's layout: its boxes fill the tab at any window size."""
 import os
+import time
 
 import pytest
 
 pytest.importorskip("PySide6")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtGui import QFontInfo  # noqa: E402
 from PySide6.QtWidgets import QApplication, QGroupBox, QVBoxLayout, QWidget  # noqa: E402
 
 from aquila import gui  # noqa: E402
+
+
+def _settle(app):
+    """Layout steps put off to the event loop have run: one pass is not enough on Windows."""
+    end = time.monotonic() + 0.3
+    while time.monotonic() < end:
+        app.processEvents()
+        time.sleep(0.01)
 
 
 def test_scan_times_from_a_scans_row():
@@ -17,6 +27,24 @@ def test_scan_times_from_a_scans_row():
     assert gui.scan_unix(row[:5]) is None and gui.scan_unix([]) is None
     assert gui.node_tz([row]) == 19800                  # the node's clock, UTC + 5:30
     assert gui.node_tz([row[:5]]) is None and gui.node_tz([]) is None
+
+
+def test_half_written_rows_are_not_listed():
+    good = ["2026-11-10 21:16:35", "obs_20261110_211134.dat", "9.7", "8.0", "1"]
+    rows = [good, ["\ufffd\ufffd torn", "\ufffd"], ["2026-11-10 21:21:35", "obs_2026"], [],
+            ["\ufffd torn2026-11-10 21:26:35", "20261110T155635Z", "0.99"], good[:2]]
+    assert gui.whole_rows((["local", "file"], rows), 1, gui.SCAN_FILE) == (
+        ["local", "file"], [good, good[:2]])
+    blocks = [["20261112T150129Z", "2026-11-12 10:01:29", "20261112T150129Z.png"],
+              ["\ufffd torn"], ["20261112T15"], []]
+    assert gui.whole_rows((["utc"], blocks), 0, gui.BLOCK_UTC) == (["utc"], blocks[:1])
+    assert gui.whole_rows(([], []), 1, gui.SCAN_FILE) == ([], [])
+
+
+def test_a_quote_in_a_damaged_row_does_not_hide_the_rows_after_it():
+    good = b"2026-11-10 21:16:35,obs_20261110_211134.dat,9.7,8.0,1\r\n"
+    rows = gui.table_rows(b"local,file\n" + good + b'\xff,"torn\x00,\x8d\n' + good * 3000)
+    assert len(rows) == 3003 and rows[-1][1] == "obs_20261110_211134.dat"
 
 
 def test_a_scan_has_one_time_the_one_in_the_list():
@@ -60,7 +88,7 @@ def test_board_fills_the_tab(size, missing):
     b.show()
     app.processEvents()
     b.place()
-    W, H = size
+    W, H = b.width(), b.height()        # a screen smaller than the size asked for cuts it
     seen = [x.geometry() for x in boxes.values() if not x.isHidden()]
     assert len(seen) == (4 if missing else 5)
     for g in seen:
@@ -79,6 +107,8 @@ def test_board_fills_the_tab(size, missing):
 
 def test_sky_text_wraps_and_hours_thin_out_in_a_small_box():
     app = QApplication.instance() or QApplication([])
+    if not QFontInfo(app.font()).family():
+        pytest.skip("this Qt platform has no fonts")
     sky = gui.SkyMap()
     sky.credit.setText(gui.skymap.CREDIT)
     sky.update_pointing({"site": {"lat": 24.67, "lon": 81.87, "alt": 300},
@@ -91,7 +121,9 @@ def test_sky_text_wraps_and_hours_thin_out_in_a_small_box():
         for lb in (sky.info, sky.credit):
             assert lb.width() <= w and lb.heightForWidth(lb.width()) <= lb.height(), (w, lb.text())
             assert lb.geometry().bottom() < sky.height()
-        assert sky._hours == (6 if w < 400 else 3)
+        # hour labels every 3 h where this font leaves them room, every 6 h where not
+        tight = 3 * (w - 50) / 24.0 < 1.5 * sky.fontMetrics().horizontalAdvance("21h")
+        assert sky._hours == (6 if tight else 3)
 
 
 def test_status_line_shortens_instead_of_being_cut():
@@ -114,7 +146,8 @@ def test_sky_name_stays_on_the_map():
     sky.show()
     for t in (1_794_325_595.0, 1_794_325_595.0 + 6 * 3600, 1_794_325_595.0 + 12 * 3600):
         sky.update_pointing(cfg, "A node with quite a long name for a small map", t)
-        app.processEvents()
+        _settle(app)
+        sky.grab()          # the map works out its scale when it is drawn
         box = sky.plot.getViewBox().sceneBoundingRect()
         name = sky.label.sceneBoundingRect()
         assert box.left() <= name.left() and name.right() <= box.right() + 1, t

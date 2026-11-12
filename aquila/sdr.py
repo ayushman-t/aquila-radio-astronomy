@@ -109,15 +109,19 @@ class _NamedPipe:
         if h is None or h == 2 ** 64 - 1:
             raise OSError(ctypes.get_last_error(), "CreateNamedPipe failed")
         self.handle = h
+        self.timed_out = False
 
-    def connect(self, proc):
+    def connect(self, proc, give_up=None, limit_s=None):
         """Wait for the tool to open the pipe, then return a binary file object.
         If the tool dies first, the pipe is completed from this side so the
-        reader sees a clean end of stream instead of waiting forever."""
+        reader sees a clean end of stream instead of waiting forever. A tool that
+        has not opened it when give_up() turns true, or after limit_s, is ended:
+        it hangs on the radio, or the node is closing."""
         import ctypes
         import msvcrt
         done = threading.Event()
         ok = [False]
+        t0 = time.monotonic()
 
         def wait():
             r = self.k.ConnectNamedPipe(self.handle, None)
@@ -125,6 +129,12 @@ class _NamedPipe:
             done.set()
         threading.Thread(target=wait, daemon=True).start()
         while not done.wait(0.2):
+            late = bool(limit_s) and time.monotonic() - t0 > limit_s
+            if late or (give_up is not None and give_up()):
+                self.timed_out = self.timed_out or late
+                with contextlib.suppress(Exception):
+                    proc.kill()
+                    proc.wait(timeout=5)
             if proc.poll() is not None:
                 GENERIC_WRITE, OPEN_EXISTING = 0x40000000, 3
                 c = self.k.CreateFileW(self.path, GENERIC_WRITE, 0, None, OPEN_EXISTING, 0, None)
@@ -162,6 +172,7 @@ class Source:
     def __init__(self, cfg):
         self.cfg = cfg
         self.proc = None
+        self.stopped = False
         adv = cfg["advanced"]
         self.rate = int(cfg["sample_rate"] or self.default_rate)
         self.center_hz = int(round(cfg["center_mhz"] * 1e6))
@@ -180,31 +191,57 @@ class Source:
         raise NotImplementedError
 
     def start(self, nsamples, frame_samples):
+        """Start one capture. stop() can arrive from another thread at any point in here:
+        the process is kept in a local name, and nothing is started once stopped."""
         if self.proc is not None:
             self.kill()
+        if self.stopped:
+            return None
+        self.stalled = False
         cmd = self.command(nsamples)
         cmd[0] = which(cmd[0]) or cmd[0]
-        self.errf = tempfile.TemporaryFile()
+        errf = self.errf = tempfile.TemporaryFile()
         bufsize = frame_samples * self.bytes_per_sample * 4
-        if sys.platform != "win32":
-            self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=self.errf,
-                                         bufsize=bufsize)
-            return self.proc
-        # The Windows builds of the vendor tools leave stdout in text mode, so a
-        # stream sent to "-" grows a 0x0D before every 0x0A byte and the IQ pairs
-        # drift out of step. A named pipe is opened as a file, in binary mode.
-        pipe = _NamedPipe(bufsize)
-        cmd = [pipe.path if a in ("-", "/dev/stdout") else a for a in cmd]
-        self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=self.errf,
-                                     creationflags=subprocess.CREATE_NO_WINDOW)
-        with contextlib.suppress(Exception):
-            _bind_to_this_process(self.proc)
-        self.proc.stdout = pipe.connect(self.proc)
-        return self.proc
+        try:
+            if sys.platform != "win32":
+                proc = self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf,
+                                                    bufsize=bufsize)
+            else:
+                # The Windows builds of the vendor tools leave stdout in text mode, so a
+                # stream sent to "-" grows a 0x0D before every 0x0A byte and the IQ pairs
+                # drift out of step. A named pipe is opened as a file, in binary mode.
+                pipe = _NamedPipe(bufsize)
+                cmd = [pipe.path if a in ("-", "/dev/stdout") else a for a in cmd]
+                proc = self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                                    stderr=errf,
+                                                    creationflags=subprocess.CREATE_NO_WINDOW)
+                with contextlib.suppress(Exception):
+                    _bind_to_this_process(proc)
+                proc.stdout = pipe.connect(proc, lambda: self.stopped, self.STALL_S)
+                self.stalled = pipe.timed_out   # the tool never got as far as its output
+        except (OSError, ValueError):
+            if self.stopped:
+                return None                     # the stop closed the tool's error file
+            raise
+        if self.stopped:
+            # stopped while the tool was being launched: the stop may have found no
+            # process to end yet, and this one must not keep the radio
+            with contextlib.suppress(Exception):
+                proc.kill()
+                proc.wait(timeout=5)
+            with contextlib.suppress(Exception):
+                proc.stdout.close()
+            if self.proc is proc:
+                self.proc = None
+            return None
+        return proc
+
+    def samples(self, raw):
+        s = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
+        return s[0::2] + 1j * s[1::2]
 
     def to_complex(self, raw):
-        s = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
-        z = s[0::2] + 1j * s[1::2]
+        z = self.samples(raw)
         if self.injector is not None:
             z = self.injector.apply(z, self.center_hz, getattr(self, "input_rms", None))
         return z
@@ -218,8 +255,9 @@ class Source:
         need = frame_samples * self.bytes_per_sample
         buf = bytearray()
         proc = self.proc
+        if proc is None:
+            return                              # stopped before or while it started
         out = proc.stdout
-        self.stalled = False
         last = [time.monotonic()]
         done = threading.Event()
 
@@ -236,7 +274,12 @@ class Source:
         try:
             while True:
                 while len(buf) < need:
-                    chunk = out.read(need - len(buf))
+                    try:
+                        chunk = out.read(need - len(buf))
+                    except (OSError, ValueError):
+                        if proc is self.proc:
+                            raise
+                        return                  # stopped: the pipe went with the tool
                     if not chunk:
                         return
                     last[0] = time.monotonic()
@@ -271,11 +314,18 @@ class Source:
             err = f"no samples for {self.STALL_S:.0f} s, tool stopped. " + err
         return err
 
+    def stop(self):
+        """End the capture and start no other: the node is closing. Safe from another
+        thread or a signal handler, also while start() is running."""
+        self.stopped = True
+        self.kill()
+
     def kill(self):
-        if self.proc is not None:
+        proc = self.proc
+        if proc is not None:
             with contextlib.suppress(Exception):
-                self.proc.kill()
-                self.proc.wait(timeout=5)
+                proc.kill()
+                proc.wait(timeout=5)
             self.proc = None
         errf = getattr(self, "errf", None)
         if errf is not None:
@@ -337,7 +387,8 @@ class HydraSDR(Airspy):
 
 
 class RtlSdr(Source):
-    """rtl_sdr, UINT8 IQ. Bias tee needs rtl_biast, run once before start."""
+    """rtl_sdr, UINT8 IQ. The bias tee is set with rtl_biast before each start, on or
+    off: the dongle keeps the last state until it is unplugged."""
     name = "rtlsdr"
     label = "RTL-SDR"
     tool = "rtl_sdr"
@@ -351,13 +402,14 @@ class RtlSdr(Source):
 
     def command(self, nsamples):
         biast = which("rtl_biast")
-        if self.bias and biast:
-            subprocess.run([biast, "-b", "1"], capture_output=True, timeout=10,
+        if biast:
+            subprocess.run([biast, "-b", "1" if self.bias else "0"],
+                           capture_output=True, timeout=10,
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         return [self.tool, "-f", str(self.center_hz), "-s", str(self.rate),
                 "-g", str(self.gain["gain"]), "-n", str(nsamples), "-"]
 
-    def to_complex(self, raw):
+    def samples(self, raw):
         s = np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 127.5
         return s[0::2] + 1j * s[1::2]
 
@@ -381,7 +433,7 @@ class HackRF(Source):
                 "-a", str(g["amp"]), "-p", "1" if self.bias else "0",
                 "-l", str(g["lna"]), "-g", str(g["vga"]), "-n", str(nsamples)]
 
-    def to_complex(self, raw):
+    def samples(self, raw):
         s = np.frombuffer(raw, dtype=np.int8).astype(np.float32)
         return s[0::2] + 1j * s[1::2]
 
@@ -410,7 +462,7 @@ class Synthetic(Source):
         return True
 
     def start(self, nsamples, frame_samples):
-        self.remaining = int(nsamples)
+        self.remaining = 0 if self.stopped else int(nsamples)
         self.frame = int(frame_samples)
         self.proc = None
         return self

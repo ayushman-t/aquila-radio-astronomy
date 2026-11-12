@@ -82,7 +82,7 @@ class Survey:
 
     def stop(self, *_):
         self.running = False
-        self.src.kill()
+        self.src.stop()
 
     def install_signals(self):
         signal.signal(signal.SIGTERM, self.stop)
@@ -318,7 +318,7 @@ class Survey:
                 err = os.path.join(self.cfg["state_dir"], "curate.err")
                 tail = ""
                 with contextlib.suppress(OSError):
-                    lines = open(err).read().strip().splitlines()
+                    lines = open(err, errors="replace").read().strip().splitlines()
                     tail = lines[-1] if lines else "killed, no message (out of memory?)"
                 self.store.log(f"curate failed ({rc}): {tail}")
         cmd = curate_cmd(self.cfg, self.src.center_hz, self.src.rate)
@@ -443,7 +443,10 @@ def curate_cmd(cfg, center_hz, rate):
         cmd = [sys.executable]
         if cfg.get("_path"):
             cmd += ["-c", cfg["_path"]]
-        return cmd + ["curate"]
+        # the tuning in use is handed over: the child must not work it out again by
+        # opening the receiver, which this process is using
+        return cmd + ["curate", "--center-hz", repr(float(center_hz)),
+                      "--rate", repr(float(rate))]
     from .skymap import beam_deg
     adv = cfg["advanced"]
     args = {"beam_deg": beam_deg(cfg["dish"].get("diameter_m"), center_hz),

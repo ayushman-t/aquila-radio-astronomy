@@ -282,3 +282,49 @@ def test_track_still_strong_at_its_last_block_passes_when_the_next_block_is_sile
     rows[0] = (rows[0][0], rows[0][1], rows[0][2], 47.0)    # now strong at both ends
     _write(os.path.join(d, "hits.csv"), rows)
     assert tiers()[0] == 0
+
+
+def test_damaged_bytes_in_the_tables_do_not_stop_the_curator():
+    """A power cut can leave bytes that are not text in any of the tables the curator
+    reads. Those rows are lost; the rest is still tiered."""
+    d = tempfile.mkdtemp()
+    rows = []
+    _transit(rows, 1_790_000_000, 175, 60, 300e3, 0.18, 30 * 175)
+    for name in ("hits.csv", "blocks.csv", "comb_history.csv"):
+        p = os.path.join(d, name)
+        if name == "hits.csv":
+            _write(p, rows)
+        elif name == "blocks.csv":
+            with open(p, "w") as f:
+                f.write("utc,center_hz\n20260924T100000Z,1420405752\n")
+        else:
+            with open(p, "w") as f:
+                f.write("run_epoch,run_utc,period,phase,R,source,n_oncomb,n_lines,center\n")
+                f.write(f"{time.time() - 60:.0f},x,42672.500,10.00,0.99000,fit,100,20,1420405752\n")
+        with open(p, "ab") as f:
+            f.write(b"\xff\xfe\x81 torn,\x8d\x90\n")
+    s = curate.run(d, beam_deg=16.4)
+    assert s["tierA"] == len(rows)
+    assert curate.load_block_times(os.path.join(d, "blocks.csv"), 1420405752.0)
+
+
+def test_a_quote_in_a_damaged_row_does_not_hide_the_rows_after_it():
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "hits.csv")
+    rows = []
+    _transit(rows, 1_790_000_000, 175, 60, 300e3, 0.18, 30 * 175)
+    _write(p, rows)
+    with open(p, "rb") as f:
+        lines = f.readlines()
+    with open(p, "wb") as f:
+        f.writelines(lines[:1] + [b'\xff,"torn,\x8d\n'] + lines[1:])
+    assert len(curate.load(p)) == len(rows)
+
+
+def test_history_row_with_a_damaged_time_is_not_used():
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "comb_history.csv")
+    with open(p, "w") as f:
+        f.write("run_epoch,run_utc,period,phase,R,source,n_oncomb,n_lines,center\n")
+        f.write(",x,42672.500,10.00,0.99000,fit,100,20,1420600000\n")
+    assert curate.load_last_good_comb(p, time.time(), 1420.6e6, (10e3, 100e3)) is None

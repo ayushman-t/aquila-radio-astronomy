@@ -133,3 +133,51 @@ def test_no_text_is_cut_in_the_smallest_boxes():
     _all_text_inside(day)
     ticks = [t.label1.get_window_extent() for t in day.axes[0].xaxis._update_ticks()]
     assert all(a.x1 < b.x0 for a, b in zip(ticks, ticks[1:], strict=False))   # hours apart
+
+
+def _scan(rate, tune=1420.0e6, chans=1024):
+    """Velocities and a smooth spectrum of one scan at this sample rate."""
+    f = tune + (np.arange(chans) - chans / 2) * rate / chans
+    v = 299792.458 * (1420.405751e6 - f) / 1420.405751e6
+    return v, 0.4 * np.exp(-0.5 * ((v - 8.0) / 12.0) ** 2)
+
+
+def test_wide_channels_leave_no_empty_velocity_bins():
+    """At 10 Msps and up one channel is wider than a 2 km/s bin: the bins between
+    channels must not come out empty, or the day plot and the 3D map show stripes."""
+    from aquila import map3d
+    for rate in (10e6, 20e6):
+        v, db = _scan(rate)
+        got = map3d.binned(v, db)
+        inside = (v.min() < V_MID) & (v.max() > V_MID)
+        assert np.isfinite(got[inside]).all()
+        want = 0.4 * np.exp(-0.5 * ((V_MID - 8.0) / 12.0) ** 2)
+        assert np.abs(got[inside] - want[inside]).max() < 0.02
+        assert not np.isfinite(got[~inside & (np.abs(V_MID) > np.abs(v).max() + 4)]).any()
+
+
+def test_a_hole_in_the_spectrum_stays_a_hole():
+    from aquila import map3d
+    for rate in (3e6, 10e6):
+        v, db = _scan(rate)
+        hole = (v > 20) & (v < 60)                      # channels cut out of the scan
+        got = map3d.binned(v, np.where(hole, np.nan, db))
+        assert not np.isfinite(got[(V_MID > 26) & (V_MID < 54)]).any()
+    v, db = _scan(3e6)                                  # narrow channels: nothing is filled in
+    n, _ = np.histogram(v, map3d.V_EDGES)
+    s, _ = np.histogram(v, map3d.V_EDGES, weights=db)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        old = np.where(n > 0, s / n, np.nan).astype(np.float32)
+    assert np.array_equal(map3d.binned(v, db), old, equal_nan=True)
+
+
+def test_slow_scans_leave_no_empty_columns_but_a_break_still_shows():
+    """Scans 20 minutes apart end in only three of every four 15 minute columns."""
+    end = 1_800_000_000.0
+    te, _, z = lineview.day_grid(_rows(72, end, step=1200.0), end)
+    filled = np.isfinite(z).any(axis=1)
+    assert filled[1:].all()                             # the first scan began before the day
+    rows = _rows(72, end, step=1200.0, gap=range(30, 45))   # 5 h without a scan
+    te, _, z = lineview.day_grid(rows, end)
+    empty = ~np.isfinite(z).any(axis=1)
+    assert 17 <= empty[1:].sum() <= 21
