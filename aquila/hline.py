@@ -293,11 +293,16 @@ def fs_search_blocks(cfg, rate):
     return max(0, int(h.get("fs_search_blocks") or 0))
 
 
+# a fall in the band that rises again by this much farther out is ripple, not the shoulder
+FLAT_RIPPLE_DB = 0.15
+
+
 def _flat_band(R, off_hz, bw):
     """Channels inside the passband, read from the reference itself: out from the
     centre until the filter shoulder, where the band is both below its middle and
     falling steeply (beyond it the image leaks in and differs between the two
-    tunings). Ripple is gradual and cancels anyway, so it does not stop the band."""
+    tunings). Ripple cancels, so a dip that comes back up farther out, as an RTL-SDR
+    has on both sides of its centre, does not stop the band."""
     from scipy.ndimage import median_filter
     lim = min(0.344 * bw, 1.6e6)
     r = median_filter(R, size=15, mode="nearest")
@@ -306,12 +311,21 @@ def _flat_band(R, off_hz, bw):
     k = max(2, int(round(1e5 / abs(off_hz[1] - off_hz[0]))))     # channels in 100 kHz
     c = len(R) // 2
 
+    def comes_back(j, step):
+        low = db[j]
+        while 0 < j + step < len(R) and abs(off_hz[j + step]) < lim and db[j + step] >= -3.0:
+            j += step
+            low = min(low, db[j])
+            if db[j] - low > FLAT_RIPPLE_DB:
+                return True
+        return False
+
     def edge(step):
         i = c
         while 0 < i + step < len(R) and abs(off_hz[i + step]) < lim:
             j = i + step
             falling = db[j - k * step] - db[j] if 0 <= j - k * step < len(R) else 0.0
-            if db[j] < -3.0 or (db[j] < -0.3 and falling > 0.25):
+            if db[j] < -3.0 or (db[j] < -0.3 and falling > 0.25 and not comes_back(j, step)):
                 break
             i = j
         return i

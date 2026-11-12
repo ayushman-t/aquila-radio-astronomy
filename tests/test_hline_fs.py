@@ -164,6 +164,12 @@ def _sdr_band(model, off, rate, tuning_index):
     if model == "rtlsdr":           # steep tuner IF filter edges, mild ripple
         edge = 1.05 * rate / 2.4e6
         band = (1 + 0.02 * np.sin(x * 9)) / (1 + (np.abs(x) / edge) ** 16)
+    elif model == "rtlsdr_v3":      # measured: dips of 0.8 dB on both sides of the centre
+        khz = [-1200, -1106, -965, -825, -684, -543, -403, -262, -121, 18, 159, 300, 440,
+               581, 721, 862, 1003, 1143, 1200]
+        db = [-7, -5.2, -2.4, -0.9, -0.5, -0.7, -0.8, -0.6, -0.2, -0.1, -0.2, -0.6, -0.7,
+              -0.4, -0.2, -0.8, -2.7, -5.6, -7]
+        band = 10 ** (np.interp(x * 1e3, khz, db) / 10)
     elif model == "airspy_mini":    # +-0.7 dB ripple, a bump before the upper edge
         band = 10 ** ((0.7 * np.sin(x * 3.1) + 1.5 * np.exp(-((x - 0.8) / 0.08) ** 2)) / 10)
         band /= 1 + ((x + 0.05) / 0.98) ** 20
@@ -180,6 +186,7 @@ def _sdr_band(model, off, rate, tuning_index):
 
 
 @pytest.mark.parametrize("model,rate", [("rtlsdr", 2_400_000), ("rtlsdr", 3_200_000),
+                                        ("rtlsdr_v3", 2_400_000),
                                         ("airspy_mini", 3_000_000), ("airspy_mini", 6_000_000),
                                         ("hydrasdr", 5_000_000), ("hydrasdr", 10_000_000),
                                         ("hackrf", 5_000_000), ("hackrf", 10_000_000),

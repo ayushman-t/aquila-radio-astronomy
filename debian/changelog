@@ -1,3 +1,10 @@
+aquila-radio-astronomy (0.2.20) unstable; urgency=medium
+
+  * Hydrogen line: an RTL-SDR whose band dips on both sides of its centre gave no
+    calibrated plot. A dip that comes back up no longer ends the usable band.
+
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Wed, 11 Nov 2026 19:41:49 -0500
+
 aquila-radio-astronomy (0.2.19) unstable; urgency=medium
 
   * Hydrogen line: a receiver with a narrow flat band, such as an Airspy at 2.5 MSPS,
