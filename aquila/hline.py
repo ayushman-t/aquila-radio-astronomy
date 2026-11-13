@@ -15,7 +15,7 @@ import numpy as np
 
 from . import config, lineview, map3d, sdr
 from .lock import acquire_lock, release_lock, watch_stop
-from .store import Store, replace
+from .store import Store, end_row, replace
 
 DEFAULTS = {
     "duration_s": 300,
@@ -157,7 +157,8 @@ def observe(src, dat, obs, log=print, fine=0, blank=False, kept=None):
             break
     err = src.finish()
     if len(rows) < nrows * 0.95:
-        log(f"scan short: {len(rows)}/{nrows} rows. {err.strip()[-120:]}")
+        if not src.stopped:
+            log(f"scan short: {len(rows)}/{nrows} rows. {err.strip()[-120:]}")
         return False
     outs = [(dat, np.array(rows, np.float32))]
     if fine and fn:
@@ -482,7 +483,7 @@ class HLine:
 
     def stop(self, *_):
         self.running = False
-        self.src.kill()
+        self.src.stop()
 
     def cal_for(self, block):
         """The cal to divide by: a SETI block's scan wants the cal made the same way
@@ -505,7 +506,7 @@ class HLine:
             for line in open(self.cal.replace(".dat", ".header")):
                 k, _, v = line.strip().partition("=")
                 hdr[k] = v
-        except OSError:
+        except (OSError, ValueError):
             return False, "calibration header missing"
         try:
             f, bw = float(hdr.get("frequency", 0)), float(hdr.get("bandwidth", 0))
@@ -796,6 +797,7 @@ class HLine:
             new = not os.path.exists(self.csv)
             if not new:
                 self._upgrade_csv_header()
+                end_row(self.csv)
 
             def num(k, fmt):
                 return "" if meas is None or meas.get(k) is None else fmt.format(meas[k])
@@ -857,13 +859,13 @@ class HLine:
         """A scans.csv from an older version: rewrite its header line once. Old rows
         keep their fewer columns; readers treat missing ones as blank."""
         try:
-            with open(self.csv, "r+", newline="") as f:
+            with open(self.csv, "r+b") as f:
                 head = f.readline()
-                if head.strip() == CSV_HEAD:
+                if head.strip() == CSV_HEAD.encode():
                     return
                 rest = f.read()
                 f.seek(0)
-                f.write(CSV_HEAD + "\n" + rest)
+                f.write(CSV_HEAD.encode() + (head[len(head.rstrip(b"\r\n")):] or b"\n") + rest)
                 f.truncate()
         except OSError:
             pass
@@ -872,8 +874,9 @@ class HLine:
         keep = int(self.h["keep_scans"])
         try:                                     # scans.csv: keep the last 2000 rows (~130 KB)
             if os.path.exists(self.csv) and os.path.getsize(self.csv) > 200_000:
-                lines = open(self.csv).readlines()
-                with open(self.csv + ".tmp", "w") as f:
+                with open(self.csv, "rb") as f:         # bytes: a damaged row cannot stop it
+                    lines = f.readlines()
+                with open(self.csv + ".tmp", "wb") as f:
                     f.writelines(lines[:1] + lines[-2000:])
                 replace(self.csv + ".tmp", self.csv)
         except OSError:

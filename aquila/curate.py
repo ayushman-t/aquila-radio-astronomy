@@ -75,31 +75,41 @@ def block_time(utc):
     except (ValueError, TypeError):
         try:
             return int(utc) * NOMINAL_DT_S
-        except ValueError:
+        except (ValueError, TypeError):
             return None
+
+
+def table(path):
+    """The rows of one of the node's tables. A power cut can leave zero bytes, or bytes
+    that are not text, in a table: they must not stop the reader, on any system. The
+    damaged rows fail the caller's own checks and are dropped there."""
+    with open(path, encoding="utf-8", errors="replace", newline="") as f:
+        # no field of these tables is quoted: a stray quote in a damaged row must not
+        # take the rows after it as its own text
+        yield from csv.DictReader((line.replace("\0", "") for line in f),
+                                  quoting=csv.QUOTE_NONE)
 
 
 def load(path):
     rows = []
     if not os.path.exists(path):
         return rows
-    with open(path) as f:
-        for r in csv.DictReader(f):
-            extra = r.get(None) or []
-            if (r.get("sdr") or (extra[-1] if extra else "")) == "synthetic":
-                continue
-            try:
-                # a power cut can leave a short or torn row: drop it, never guess
-                row = {"utc": r["utc"], "local": r.get("local") or r.get("ist", ""),
-                       "freq": float(r["sky_freq_hz"]), "drift": float(r["drift_hz_s"]),
-                       "snr": float(r["snr"]), "width": float(r.get("width_hz") or 0),
-                       "cov": float(r.get("coverage") or -1), "thumb": r.get("thumb") or ""}
-            except (ValueError, KeyError, TypeError):
-                continue
-            if block_time(row["utc"]) is None or not all(
-                    math.isfinite(row[k]) for k in ("freq", "drift", "snr", "width", "cov")):
-                continue
-            rows.append(row)
+    for r in table(path):
+        extra = r.get(None) or []
+        if (r.get("sdr") or (extra[-1] if extra else "")) == "synthetic":
+            continue
+        try:
+            # a power cut can leave a short or torn row: drop it, never guess
+            row = {"utc": r["utc"], "local": r.get("local") or r.get("ist", ""),
+                   "freq": float(r["sky_freq_hz"]), "drift": float(r["drift_hz_s"]),
+                   "snr": float(r["snr"]), "width": float(r.get("width_hz") or 0),
+                   "cov": float(r.get("coverage") or -1), "thumb": r.get("thumb") or ""}
+        except (ValueError, KeyError, TypeError):
+            continue
+        if block_time(row["utc"]) is None or not all(
+                math.isfinite(row[k]) for k in ("freq", "drift", "snr", "width", "cov")):
+            continue
+        rows.append(row)
     return rows
 
 
@@ -158,16 +168,15 @@ def load_block_times(path, center_hz):
     out = []
     if not os.path.exists(path):
         return out
-    with open(path) as f:
-        for r in csv.DictReader(f):
-            try:
-                if abs(float(r.get("center_hz") or center_hz) - center_hz) > CENTER_TOL_HZ:
-                    continue
-            except ValueError:
+    for r in table(path):
+        try:
+            if abs(float(r.get("center_hz") or center_hz) - center_hz) > CENTER_TOL_HZ:
                 continue
-            t = block_time(r.get("utc", ""))
-            if t is not None:
-                out.append(t)
+        except ValueError:
+            continue
+        t = block_time(r.get("utc", ""))
+        if t is not None:
+            out.append(t)
     return out
 
 
@@ -175,19 +184,21 @@ def load_last_good_comb(path, now, center, window=(0.0, 1e12)):
     if not os.path.exists(path):
         return None
     best = None
-    with open(path) as f:
-        for r in csv.DictReader(f):
-            try:
-                # a row from before the center column existed reads as None, not missing
-                if (r.get("source") == "fit" and float(r["R"]) >= COMB_MIN_R
-                        and abs(float(r.get("center") or center) - center) < 1
-                        and window[0] <= float(r["period"]) <= window[1]):
-                    best = r
-            except (ValueError, KeyError, TypeError):
-                continue
-    if not best or now - float(best["run_epoch"]) > COMB_FALLBACK_MAX_S:
-        return None
-    return float(best["period"]), float(best["phase"]), float(best["R"])
+    for r in table(path):
+        try:
+            # a row from before the center column existed reads as None, not missing
+            if (r.get("source") == "fit" and float(r["R"]) >= COMB_MIN_R
+                    and abs(float(r.get("center") or center) - center) < 1
+                    and window[0] <= float(r["period"]) <= window[1]):
+                best = r
+        except (ValueError, KeyError, TypeError):
+            continue
+    try:
+        if not best or now - float(best["run_epoch"]) > COMB_FALLBACK_MAX_S:
+            return None
+        return float(best["period"]), float(best["phase"]), float(best["R"])
+    except (ValueError, KeyError, TypeError):
+        return None                      # the row's other columns are damaged
 
 
 def log_comb(path, now, comb, source, n_oncomb, n_lines, center):
@@ -199,16 +210,26 @@ def log_comb(path, now, comb, source, n_oncomb, n_lines, center):
                 f"{n_oncomb},{n_lines},{center:.0f}\n")
         rows = []
         if os.path.exists(path):
-            with open(path) as f:
-                rows = f.readlines()[1:]
+            with open(path, encoding="utf-8", errors="replace", newline="") as f:
+                rows = [ln for ln in f.readlines()[1:] if _whole(ln)]
         rows.append(line)
         rows = rows[-COMB_HISTORY_KEEP:]
-        with open(path + ".tmp", "w") as f:
+        with open(path + ".tmp", "w", encoding="utf-8", newline="") as f:
             f.write(header)
             f.writelines(rows)
         replace(path + ".tmp", path)
-    except OSError:
+    except (OSError, ValueError):
         pass
+
+
+def _whole(line):
+    """A history row that was written completely: a torn one is not carried along."""
+    part = line.split(",")
+    try:
+        float(part[0]), float(part[2])
+        return line.endswith("\n") and len(part) >= 8
+    except (ValueError, IndexError):
+        return False
 
 
 # ---------------------------------------------------------------- envelope
@@ -470,12 +491,12 @@ def run(state_dir, beam_deg=None, center_hz=1420e6, exclude_if_khz=(), snr_thres
             r["tier"], r["utc"], r["local"], r["freq"], r["drift"], r["snr"], r["width"],
             r["cov"], extra, r["thumb"])
 
-    with open(cand + ".tmp", "w") as f:
+    with open(cand + ".tmp", "w", encoding="utf-8") as f:
         f.write("tier,utc,local,sky_freq_hz,drift_hz_s,snr,width_hz,coverage,thumb\n")
         for r in sorted(out["A"] + out["B"] + out["C"], key=lambda x: (order[x["tier"]], x["utc"])):
             f.write(row(r))
     replace(cand + ".tmp", cand)
-    with open(cand_oncomb + ".tmp", "w") as f:
+    with open(cand_oncomb + ".tmp", "w", encoding="utf-8") as f:
         f.write("tier,utc,local,sky_freq_hz,drift_hz_s,snr,width_hz,coverage,comb_n,thumb\n")
         for r in sorted(out["oncomb_review"], key=lambda x: -x["snr"]):
             f.write(row(r, f"{r.get('comb_n', 0)},"))

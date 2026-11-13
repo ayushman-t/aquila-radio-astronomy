@@ -128,6 +128,7 @@ def test_api_never_serves_config_or_outside_files():
         assert get("/status.json") == 200
         assert get("/config.json") == 404
         assert get("/link.txt") == 404
+        assert get("/waterfalls/%00") == 404        # answered, not dropped with an error
     finally:
         srv.shutdown()
 

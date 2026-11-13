@@ -433,3 +433,57 @@ def test_search_frequency_switches_by_default_only_on_the_line():
     assert fs_search_blocks({**cfg, "center_mhz": 1500.0}, 3e6) == 0
     assert fs_search_blocks({**cfg, "center_mhz": 11000.0}, 10e6) == 0
     assert fs_search_blocks(cfg, 250e3) == 0        # line outside so narrow a band
+
+
+def _node(tmp_path):
+    from aquila import config as cfgmod
+    from aquila.sdr import Synthetic
+    cfg = cfgmod.load(str(tmp_path / "c.json"))
+    cfg.update(sdr="synthetic", sample_rate=2_400_000, state_dir=str(tmp_path / "s"))
+    return hline.HLine(cfg, source=Synthetic(cfg), log=lambda m: None)
+
+
+def test_scan_list_with_damaged_bytes_is_still_upgraded_and_trimmed(tmp_path):
+    """A power cut can leave bytes that are not text in scans.csv. The header upgrade and
+    the trim must get past them, on any system, and leave the other rows as they were."""
+    node = _node(tmp_path)
+    bad = b"\xff\xfe\x81 torn,\x8d\x90\r\n"
+    row = b"2026-11-12 05:30:00,obs_20261112_053000.dat,1.20,-3.1,1\r\n"
+    with open(node.csv, "wb") as f:
+        f.write(b"local,file,pct,kms,cal\r\n" + bad + row * 5000)
+    node._upgrade_csv_header()
+    got = open(node.csv, "rb").read()
+    assert got.startswith(hline.CSV_HEAD.encode() + b"\r\n" + bad + row)
+    assert len(got) == len(hline.CSV_HEAD) + 2 + len(bad) + 5000 * len(row)
+    node._upgrade_csv_header()                          # a second time changes nothing
+    assert open(node.csv, "rb").read() == got
+    node.trim()
+    lines = open(node.csv, "rb").read().splitlines()
+    assert lines[0] == hline.CSV_HEAD.encode() and len(lines) == 2001
+    assert set(lines[1:]) == {row.strip()}
+
+
+def test_scan_after_a_row_cut_short_is_still_listed(tmp_path, monkeypatch):
+    """A power cut can end scans.csv in the middle of a row: the next scan's row must
+    start on its own line, or that scan is missing from the list."""
+    node = _node(tmp_path)
+    node.cfg["save"]["plots"] = False
+    node.h.update(duration_s=40, fs_phase_s=10)
+    chans = 1024
+    off = (np.arange(chans) - chans / 2.0) * 2_400_000 / chans
+    rng = np.random.default_rng(1)
+
+    def fake_observe(s, dat, obs, log=print, fine=0, **_):
+        n = int(obs["duration"] / obs["t_sample"])
+        rows = _sky(s.center_hz + off, 0.05, 0.0, 0.0) * (
+            1 + 1e-4 * rng.standard_normal((n, chans)))
+        rows.astype(np.float32).tofile(dat)
+        return True
+    monkeypatch.setattr(hline, "observe", fake_observe)
+    assert node.scan()
+    with open(node.csv, "ab") as f:
+        f.write(b"2026-11-12 05:30:00,obs_2026")         # the power went here
+    assert node.scan()
+    rows = open(node.csv, "rb").read().splitlines()
+    assert len(rows) == 4 and rows[2] == b"2026-11-12 05:30:00,obs_2026"
+    assert len(rows[3].split(b",")) == 8 and rows[3].split(b",")[1].startswith(b"obs_")

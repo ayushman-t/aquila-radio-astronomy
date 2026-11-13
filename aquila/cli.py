@@ -106,14 +106,38 @@ def gui_entry():
     main(sys.argv[1:] + ["gui"])
 
 
+def _rate_in_use(cfg):
+    """The sample rate of the search whose hits are in the data folder, without opening a
+    receiver: a search may be running on it. The node's own status says; before a first
+    run, the configured receiver's rate."""
+    try:
+        with open(os.path.join(cfg["state_dir"], "status.json"), encoding="utf-8") as f:
+            rate = float(json.load(f)["sample_rate"])
+        if rate > 0:
+            return int(rate)
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    name = cfg.get("sdr", "auto")
+    if name == "auto":
+        name = (sdr.detect() or ["airspy"])[0]
+    if name not in sdr.SOURCES:
+        raise RuntimeError(f"unknown sdr '{name}'")
+    return int(cfg.get("sample_rate") or sdr.SOURCES[name].default_rate)
+
+
 def cmd_curate(args):
     cfg = config.load(args.config)
     from .skymap import beam_deg
-    center = cfg["center_mhz"] * 1e6
-    h = cfg.get("hline") or {}
-    rate = sdr.make(cfg).rate
-    if fs_search_blocks(cfg, rate):
-        center = fs_tunings({**HLINE_DEFAULTS, **h}, rate)[0]
+    if args.center_hz and args.rate:
+        # started by the running search, with its own tuning: the receiver is in use
+        # and is not to be opened, or asked what it is, from here
+        center, rate = args.center_hz, args.rate
+    else:
+        center = cfg["center_mhz"] * 1e6
+        h = cfg.get("hline") or {}
+        rate = _rate_in_use(cfg)
+        if fs_search_blocks(cfg, rate):
+            center = fs_tunings({**HLINE_DEFAULTS, **h}, rate)[0]
     beam = beam_deg(cfg["dish"].get("diameter_m"), center)
     adv = cfg["advanced"]
     print(json.dumps(curate.run(cfg["state_dir"], beam, center,
@@ -164,7 +188,10 @@ def main(argv=None):
     a.set_defaults(fn=cmd_cal)
     sub.add_parser("serve").set_defaults(fn=cmd_serve)
     sub.add_parser("gui").set_defaults(fn=cmd_gui)
-    sub.add_parser("curate").set_defaults(fn=cmd_curate)
+    a = sub.add_parser("curate")
+    a.add_argument("--center-hz", type=float, help=argparse.SUPPRESS)
+    a.add_argument("--rate", type=float, help=argparse.SUPPRESS)
+    a.set_defaults(fn=cmd_curate)
     sub.add_parser("map3d").set_defaults(fn=cmd_map3d)
     sub.add_parser("status").set_defaults(fn=cmd_status)
     args = ap.parse_args(argv)

@@ -18,15 +18,45 @@ PNG = "map3d.png"
 MIN_ROWS = 3
 YOUNG_ROWS = 24
 V_SHOW = 150.0
+BOX = (1.8, 1.0, 0.7)             # the 3D box: time, velocity, dB
 
 
 def binned(v, db):
     """A scan's spectrum on the fixed velocity grid, so scans at any rate or tuning line up."""
-    ok = np.isfinite(db)
+    ok = np.isfinite(db) & np.isfinite(v)
     n, _ = np.histogram(v[ok], V_EDGES)
     s, _ = np.histogram(v[ok], V_EDGES, weights=db[ok])
     with np.errstate(invalid="ignore", divide="ignore"):
-        return np.where(n > 0, s / n, np.nan).astype(np.float32)
+        out = np.where(n > 0, s / n, np.nan)
+    # at 10 Msps and up a channel is wider than a bin, so some bins get no channel: those
+    # take the value between the two channels either side. A hole in the data stays a hole.
+    if v.size > 2 and ok.sum() > 1:
+        chan = float(np.median(np.abs(np.diff(v))))
+        order = np.argsort(v[ok])
+        vs, ds = v[ok][order], db[ok][order]
+        empty = np.where((n == 0) & (vs[0] < V_MID) & (vs[-1] > V_MID))[0]
+        if chan > V_EDGES[1] - V_EDGES[0] and empty.size:
+            j = np.searchsorted(vs, V_MID[empty])
+            near = (vs[j] - vs[j - 1]) <= 1.5 * chan
+            out[empty[near]] = np.interp(V_MID[empty[near]], vs, ds)
+    return out.astype(np.float32)
+
+
+def bridge(z, t0, step, rows, cols=slice(None)):
+    """Scans that take longer than one time bin leave bins that no scan ended in. Such a
+    bin, between two scans that followed one another, shows the scan recorded across it.
+    A break in observing stays empty."""
+    if rows.size < 3:
+        return
+    order = np.argsort(rows["t"])
+    ts = rows["t"][order]
+    usual = float(np.median(np.diff(ts)))
+    if usual <= step:
+        return
+    for i in np.where(~np.isfinite(z).any(axis=1))[0]:
+        j = int(np.searchsorted(ts, t0 + (i + 1) * step))     # the first scan to end after it
+        if 0 < j < ts.size and ts[j] - ts[j - 1] <= 1.5 * usual:
+            z[i] = rows["spec"][order[j]][cols]
 
 
 def append(hdir, t, v, db):
@@ -107,6 +137,7 @@ def grid(rows, days, now=None):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)     # a velocity with no data
             z[i] = np.nanmedian(rows["spec"][idx == i], axis=0)
+    bridge(z, t0, step, rows)
     have = np.isfinite(rows["spec"]).mean(0) > 0.5
     if not have.any():
         return None
@@ -247,7 +278,7 @@ def draw(fig, rows, title="", days=7, now=None, light=False, fig2=None):
     ax.set_zlabel("dB", labelpad=4)
     ax.set_xlim(x[0], x[-1])
     ax.set_ylim(v[0], v[-1])
-    ax.set_box_aspect((1.8, 1.0, 0.7))
+    ax.set_box_aspect(BOX)
     ax.set_zlim(lo, hi)
     ticks, fmt = _ticks(x[0], x[-1], 5)
     ax.xaxis.set_major_locator(FixedLocator(ticks))
@@ -273,6 +304,62 @@ def draw(fig, rows, title="", days=7, now=None, light=False, fig2=None):
     else:
         fig.subplots_adjust(left=0.0, right=1.0, top=1.0, bottom=0.06)
     return ax
+
+
+def _extent(ax, renderer):
+    """The box of the 3D view with its numbers and labels, in pixels."""
+    from matplotlib.transforms import Bbox
+    from mpl_toolkits.mplot3d import proj3d
+    x, y, z = np.meshgrid(ax.get_xlim3d(), ax.get_ylim3d(), ax.get_zlim3d())
+    px, py, _ = proj3d.proj_transform(x.ravel(), y.ravel(), z.ravel(), ax.get_proj())
+    parts = [Bbox.null()]
+    parts[0].update_from_data_xy(ax.transData.transform(np.column_stack([px, py])))
+    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+        b = axis.get_tightbbox(renderer)
+        if b is not None and np.all(np.isfinite(b.extents)):
+            parts.append(b)
+    return Bbox.union(parts)
+
+
+def fit(ax, zoom, edge=3.0):
+    """Keep the numbers and labels of the 3D view inside its figure as it is turned now:
+    moved over where that is enough, drawn smaller where the figure is too narrow for it.
+    Returns the zoom, `zoom` at most."""
+    from matplotlib.transforms import Bbox
+    fig = ax.figure
+    strips = getattr(ax, "_aquila_strips", [])
+    home = getattr(ax, "_aquila_home", None)
+    if home is None:
+        home = ax._aquila_home = ax.get_position(original=True).frozen()
+    z, move = zoom, np.zeros(2)
+    try:
+        renderer = fig.canvas.get_renderer()
+        for c in strips:
+            c.set_visible(False)        # the surface is slow to draw and stays inside the box
+        for _ in range(8):
+            ax.set_box_aspect(BOX, zoom=z)
+            ax.set_position(Bbox(home.get_points() + move / fig.bbox.size))
+            fig.draw_without_rendering()
+            bb, f = _extent(ax, renderer), fig.bbox
+            low = bb.min - (f.min + edge)           # room left over on each side, x and y
+            high = (f.max - edge) - bb.max
+            fits = low + high >= 0
+            # where it fits it moves just far enough, where it cannot it sits in the middle
+            step = np.where(fits, np.maximum(-low, 0) - np.maximum(-high, 0), 0.5 * (high - low))
+            move += step
+            if fits.all():
+                if step.any():
+                    ax.set_position(Bbox(home.get_points() + move / fig.bbox.size))
+                break
+            # the labels keep their distance from the box, so one step falls a little short
+            z *= max(float(np.min((f.size - 2 * edge) / bb.size)), 0.5) * 0.99
+    except Exception:
+        z = zoom                        # an older matplotlib: the view as it always was
+        ax.set_position(home)
+    finally:
+        for c in strips:
+            c.set_visible(True)
+    return z
 
 
 def lay(ax):

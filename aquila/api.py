@@ -82,7 +82,10 @@ def _handler(state_dir, budget, token=""):
         def _private(self, full):
             """Outside the data folder (symlinks resolved), or a file no client needs."""
             root = os.path.realpath(state_dir)
-            real = os.path.realpath(full)
+            try:
+                real = os.path.realpath(full)
+            except ValueError:         # a name no file can have
+                return True
             name = os.path.basename(real)
             return (not real.startswith(root + os.sep) or name in PRIVATE
                     or name.startswith(".") or name.endswith((".tmp", ".lock")))

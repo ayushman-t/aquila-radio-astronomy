@@ -151,7 +151,7 @@ class Poller(QThread):
             fresh = last is None or newest > last + lineview.MATCH_S
         jobs = {}
         if slow_ok or fresh:
-            jobs["_scans"] = lambda: n.csv_rows("hline/scans.csv", st)
+            jobs["_scans"] = lambda: whole_rows(n.csv_rows("hline/scans.csv", st), 1, SCAN_FILE)
         if slow_ok:
             jobs["_cands"] = lambda: n.csv_rows("candidates.csv", st)
             jobs["_blocks"] = lambda: self._blocks(n, idx, st)
@@ -191,7 +191,8 @@ class Poller(QThread):
         for them). Once the csv has 200 rows the folder is not listed any more."""
         files = (idx or {}).get("files") or {}
         has_csv = files.get("blocks.csv")
-        head, rows = n.csv_rows("blocks.csv", stop) if has_csv or not n.remote else ([], [])
+        head, rows = (whole_rows(n.csv_rows("blocks.csv", stop), 0, BLOCK_UTC)
+                      if has_csv or not n.remote else ([], []))
         if has_csv and not head:
             return None               # the node has the file but the fetch failed: keep the table
         if len(rows) >= 200:
@@ -241,6 +242,38 @@ class Probe(QThread):
 
     def run(self):
         self.done.emit(sdr.probe(self.cfg))
+
+
+def clean_index(idx):
+    """A node's index as the window reads it, or None when it is not one. An address can
+    answer with anything: a part of the wrong kind is left out, and shows as '-'."""
+    if not isinstance(idx, dict):
+        return None
+    idx = {k: v for k, v in idx.items()
+           if k not in ("status", "curate", "files", "hline") or isinstance(v, dict)}
+    if "status" in idx:
+        s = idx["status"] = dict(idx["status"])
+        for k in ("ts", "dwell_s", "cal_s", "center_hz", "chan_bw_hz", "footprint_mb"):
+            try:
+                ok = type(s.get(k)) in (int, float) and math.isfinite(s[k])
+            except OverflowError:       # a whole number too long for the clock or the dial
+                ok = False
+            if not ok:
+                s.pop(k, None)
+        for k in ("dish", "site"):
+            if not isinstance(s.get(k), dict):
+                s.pop(k, None)
+    return idx
+
+
+def table_rows(b):
+    """The rows of a node's table from its bytes. No field of these tables is quoted: a
+    stray quote in a damaged row must not take the rows after it as its own text."""
+    text = b.replace(b"\0", b"").decode(errors="replace")
+    try:
+        return list(csv.reader(io.StringIO(text), quoting=csv.QUOTE_NONE))
+    except csv.Error:
+        return []
 
 
 class Node:
@@ -365,21 +398,17 @@ class Node:
         if self.remote:
             b = self.get("index.json")
             try:
-                return json.loads(b) if b else None
+                return clean_index(json.loads(b)) if b else None
             except ValueError:
                 return None
         from .api import index
-        return index(self.base) if os.path.isdir(self.base) else {}
+        return clean_index(index(self.base)) if os.path.isdir(self.base) else {}
 
     def csv_rows(self, rel, stop=None):
         b = self.get(rel, stop)
         if not b:
             return [], []
-        try:
-            rows = list(csv.reader(io.StringIO(b.replace(b"\0", b"").decode(errors="replace"))))
-        except csv.Error:
-            return [], []
-        rows = [r for r in rows if r]
+        rows = [r for r in table_rows(b) if r]
         return (rows[0], rows[1:]) if rows else ([], [])
 
 
@@ -487,14 +516,14 @@ class Downloader(QThread):
             b = self.node.get(f"{rel}?utc={utc}" if self.node.remote else rel)
             if not b:
                 continue
-            r = list(csv.reader(io.StringIO(b.decode(errors="replace"))))
+            r = table_rows(b)
             if r and not rows:
                 rows.append(r[0] + ["kind"])
             kind = "candidate" if rel == "hits.csv" else "carrier"
             rows += [x + [kind] for x in r[1:] if x and x[0] == utc]
         if len(rows) > 1:
             name = f"{utc}_hits.csv"
-            with open(os.path.join(self.dest, name), "w", newline="") as fh:
+            with open(os.path.join(self.dest, name), "w", newline="", encoding="utf-8") as fh:
                 csv.writer(fh).writerows(rows)
             got.append(name)
         return got
@@ -549,11 +578,30 @@ def stamp(utc, node_local=""):
     return ""
 
 
+SCAN_FILE = re.compile(r"obs_\d{8}_\d{6}\.dat$")
+BLOCK_UTC = re.compile(r"\d{8}T\d{6}Z$")
+
+
+def whole_rows(table, col, shape):
+    """(head, rows) of a node's table without the rows a crash or power cut left half
+    written: those have no proper name in column `col` and are not listed."""
+    head, rows = table
+    return head, [r for r in rows if len(r) > col and shape.match(r[col])]
+
+
 def scan_unix(row):
     """When a scans.csv row was written, as unix time. None when the row has no UTC."""
     m = re.search(r"(\d{4})(\d{2})(\d{2})[T_](\d{2})(\d{2})(\d{2})",
                   row[5] if row and len(row) > 5 else "")
-    return calendar.timegm(tuple(int(x) for x in m.groups()) + (0, 0, 0)) if m else None
+    return _unix(m)
+
+
+def _unix(m):
+    """Unix time of six matched date and time fields. None for no match or no such day."""
+    try:
+        return calendar.timegm(tuple(int(x) for x in m.groups()) + (0, 0, 0)) if m else None
+    except ValueError:
+        return None
 
 
 def node_tz(rows):
@@ -562,8 +610,8 @@ def node_tz(rows):
     for r in rows[::-1][:5]:
         u = scan_unix(r)
         m = re.match(r"(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})", r[0] if r else "")
-        if u is not None and m:
-            own = calendar.timegm(tuple(int(x) for x in m.groups()) + (0, 0, 0))
+        own = _unix(m)
+        if u is not None and own is not None:
             return int(round((own - u) / 900.0)) * 900
     return None
 
@@ -771,6 +819,7 @@ class Map3DPane(QWidget):
     plotting backend is missing) it shows the picture the node drew instead."""
     HINT = "Drag to turn, right drag or the buttons to zoom, Reset for the first view"
     HOME = (32, -60)
+    ZOOM = 1.15                    # the size of the first view, where the box has the room
 
     def __init__(self, text):
         super().__init__()
@@ -781,7 +830,8 @@ class Map3DPane(QWidget):
         self._rows = self._key = None
         self._title = ""
         self._drawn = None
-        self._zoom = 1.15
+        self._zoom = self.ZOOM
+        self._fit = 1.0            # below 1: the box is too narrow for the full size
         self.log = None            # the window's log, for the view trace
         self._view = None          # (elev, azim, roll) after the last user action or redraw
         try:
@@ -794,6 +844,9 @@ class Map3DPane(QWidget):
         self.canvas.setToolTip(self.HINT)
         self.canvas.mpl_connect("button_release_event", self._released)
         self.canvas.mpl_connect("button_press_event", self._pressed)
+        self.canvas.mpl_connect("resize_event", lambda e: self._sized.start())
+        self._sized = QTimer(self, singleShot=True, interval=150)   # once the dragging rests
+        self._sized.timeout.connect(self._resized)
         self.fig2 = Figure(figsize=(5.5, 6.0), dpi=100, layout="constrained")
         self.canvas2 = FigureCanvasQTAgg(self.fig2)
         for c in (self.canvas, self.canvas2):
@@ -886,7 +939,7 @@ class Map3DPane(QWidget):
         self.ax = ax
         if view is not None:
             ax.view_init(elev=view[0], azim=view[1])
-        self._apply_zoom()
+        self._refit()
         map3d.lay(ax)
         self._trace("redraw", expect=view)
         n = getattr(ax, "_aquila_scans", None)
@@ -898,8 +951,22 @@ class Map3DPane(QWidget):
 
     def _apply_zoom(self):
         if self.ax is not None:
+            from . import map3d
             with contextlib.suppress(TypeError):
-                self.ax.set_box_aspect((1.8, 1.0, 0.7), zoom=self._zoom)
+                self.ax.set_box_aspect(map3d.BOX, zoom=self._zoom * self._fit)
+
+    def _refit(self):
+        """The numbers and labels of the first view stay inside the box whatever its shape
+        and however the view is turned. Zooming in past that is the user's own choice."""
+        if self.ax is not None:
+            from . import map3d
+            self._fit = map3d.fit(self.ax, self.ZOOM) / self.ZOOM
+            self._apply_zoom()
+
+    def _resized(self):
+        if self.ax is not None and self.isVisible():
+            self._refit()
+            self.canvas.draw_idle()
 
     def _relay(self):
         if self.ax is not None:
@@ -930,9 +997,9 @@ class Map3DPane(QWidget):
 
     def reset_view(self):
         if self.ax is not None:
-            self._zoom = 1.15
+            self._zoom = self.ZOOM
             self.ax.view_init(elev=self.HOME[0], azim=self.HOME[1])
-            self._apply_zoom()
+            self._refit()
             self._relay()
             self._trace("reset")
 
@@ -945,6 +1012,7 @@ class Map3DPane(QWidget):
     def turn(self, d_azim, d_elev):
         if self.ax is not None:
             self.ax.view_init(elev=self.ax.elev + d_elev, azim=self.ax.azim + d_azim)
+            self._refit()
             self._relay()
             self._trace("button")
 
@@ -964,6 +1032,7 @@ class Map3DPane(QWidget):
     def _released(self, e):
         # turning keeps the order the surface was laid in for the old view: lay it again
         if self.ax is not None and e.inaxes is self.ax:
+            self._refit()
             self._relay()
             self._trace("after drag")
 
@@ -1008,6 +1077,8 @@ class SkyMap(QWidget):
                                     symbolPen=pg.mkPen("#3070c0", width=2))
         self.label = pg.TextItem("", color="#3070c0", anchor=(0.5, 1.2))
         self.plot.addItem(self.label)
+        # the map's box changes after it is first drawn (its axis finds its width)
+        self.plot.getViewBox().sigResized.connect(lambda *_: self._place_label())
         lay.addWidget(self.plot)
         self.info = QLabel("Set the site location in Settings to see where the dish points.")
         self.info.setWordWrap(True)
@@ -1032,8 +1103,15 @@ class SkyMap(QWidget):
             per_px = (x1 - x0) / vb.width()
         room = (x1 - x0) / per_px if per_px else 0.0
         fm = QFontMetrics(self.label.textItem.font())
-        self.label.setText(fm.elidedText(self._name, Qt.ElideRight, int(room) - 8)
-                           if room > 40 else self._name)
+        self.label.setText(self._name)
+        lim = int(room) - 8
+        for _ in range(4 if room > 40 else 0):
+            # shortened by the label's own drawn width: font measures alone can be short
+            self.label.setText(fm.elidedText(self._name, Qt.ElideRight, lim))
+            over = self.label.boundingRect().width() - room
+            if over <= 0:
+                break
+            lim -= int(over) + 1
         w = (self.label.boundingRect().width() + 4) * per_px
         a = 0.5
         if w > 0:
@@ -1125,6 +1203,26 @@ class SkyMap(QWidget):
         self.info.setText((nb * 4 + " ").join(q.replace(" ", nb) for q in parts))
 
 
+IN_USE_TEXT = "In use by the node. Stop observing to check."
+
+
+def _in_use(current_sdr, chosen):
+    """True when a check would try to open the receiver this computer's node holds."""
+    return bool(current_sdr) and chosen in ("auto", current_sdr)
+
+
+def _auto_pick(names):
+    """The receiver Auto takes from those plugged in: the node tries them in this order."""
+    return next((n for n in sdr.detect() if n in names), None)
+
+
+def _rate_fits(cls, rate):
+    """True for a saved sample rate this receiver can be asked for: none (its default),
+    one it lists, or one set by hand inside its range."""
+    rate = int(rate or 0)
+    return not rate or not cls.rates or min(cls.rates) <= rate <= max(cls.rates)
+
+
 class Settings(QDialog):
     """The few things a user sets. Everything else stays in the config file."""
 
@@ -1149,6 +1247,8 @@ class Settings(QDialog):
         avail = scr.availableGeometry().height() if scr else 720
         self.resize(860, min(720, avail - 80))
         self.sdr = QComboBox()
+        self.current_sdr = current_sdr if current_sdr in sdr.SOURCES else None
+        self.auto_sdr = self.current_sdr     # the receiver Auto stands for, once known
         cur = (sdr.SOURCES[current_sdr].label if current_sdr in sdr.SOURCES
                else (current_sdr or "none"))
         self.sdr.addItem(f"Auto (first SDR found; current: {cur})", "auto")
@@ -1158,6 +1258,7 @@ class Settings(QDialog):
                 self.sdr.model().item(self.sdr.count() - 1).setEnabled(False)
         i = self.sdr.findData(cfg["sdr"])
         self.sdr.setCurrentIndex(i if i >= 0 else 0)
+        self._sdr_opened = self.sdr.currentIndex()
         row = QHBoxLayout()
         row.addWidget(self.sdr, 1)
         self.check = QPushButton("Check")
@@ -1171,10 +1272,7 @@ class Settings(QDialog):
         else:
             self.sdr_result.setText("Not observing. Looking for a connected receiver...")
             self._scan = Call(sdr.attached)
-            self._scan.done.connect(lambda names: self.sdr_result.setText(
-                "Not observing. Connected: " + ", ".join(sdr.SOURCES[n].label for n in names)
-                if names and not isinstance(names, Exception) else
-                "Not observing. No receiver connected."))
+            self._scan.done.connect(self._scanned)
             self._scan.start()
         self.sdr_result.setStyleSheet("color: gray")
         form.addRow(self.sdr_result)
@@ -1203,7 +1301,10 @@ class Settings(QDialog):
         for p in (10, 12, 14, 16, 18, 19, 20, 21, 22):
             tag = "  (recommended)" if p == 20 else ("  (hydrogen line only)" if p < 18 else "")
             self.fft.addItem(f"2^{p}{tag}", 1 << p)
-        i = self.fft.findData(int(cfg["advanced"]["n_chan"]))
+        n_now = int(cfg["advanced"]["n_chan"])
+        if self.fft.findData(n_now) < 0 and n_now > 0:
+            self.fft.addItem(f"{n_now}", n_now)      # set by hand in the config file: keep it
+        i = self.fft.findData(n_now)
         self.fft.setCurrentIndex(i if i >= 0 else self.fft.findData(1 << 20))
         row = QHBoxLayout()
         row.addWidget(self.fft, 1)
@@ -1264,6 +1365,7 @@ class Settings(QDialog):
         self.share = QCheckBox("Let other computers on this network see this node")
         self.share.setChecked(cfg["advanced"].get("api_bind", "127.0.0.1") not in
                               ("127.0.0.1", "localhost", "::1"))
+        self._share_opened = self.share.isChecked()
         form.addRow("Network:", self.share)
         port = cfg["advanced"].get("api_port", 8090)
         shnote = QLabel(f"On the other computer add http://{_lan_ip()}:{port} as a node. Takes "
@@ -1353,7 +1455,24 @@ class Settings(QDialog):
         bb.rejected.connect(self.reject)
         outer.addWidget(bb)
 
+    def _scanned(self, names):
+        """The USB scan is back: say what is connected, and show that receiver's gain
+        stages and rates under Auto, since that is the one the node will use."""
+        names = [] if isinstance(names, Exception) else [n for n in names if n in sdr.SOURCES]
+        self.sdr_result.setText(
+            "Not observing. Connected: " + ", ".join(sdr.SOURCES[n].label for n in names)
+            if names else "Not observing. No receiver connected.")
+        first = _auto_pick(names)
+        if first and self.auto_sdr is None:
+            self.auto_sdr = first
+            self._fill_gains()
+            self._fill_rates()
+
     def check_sdr(self):
+        if _in_use(self.current_sdr, self.sdr.currentData()):
+            self.sdr_result.setText(IN_USE_TEXT)
+            self.sdr_result.setStyleSheet("")
+            return
         self.check.setEnabled(False)
         self.sdr_result.setText("Opening the SDR...")
         cfg = {k: v for k, v in self.apply().items() if not k.startswith("_")}
@@ -1375,8 +1494,12 @@ class Settings(QDialog):
             self._folder_set = True
 
     def _sdr_class(self):
+        """The receiver the page is showing. Auto is the one in use or plugged in; with
+        neither known, the first one this computer has the software for."""
         name = self.sdr.currentData()
-        return sdr.SOURCES.get(name) or sdr.SOURCES[(sdr.detect() or ["airspy"])[0]]
+        if name not in sdr.SOURCES:
+            name = self.auto_sdr or (sdr.detect() or ["airspy"])[0]
+        return sdr.SOURCES[name]
 
     def _fill_gains(self):
         """One box per gain stage of the chosen receiver, opening at the saved values."""
@@ -1403,12 +1526,19 @@ class Settings(QDialog):
             self.gain_row.addWidget(box)
             self.gain_boxes[key] = box
         self.gain_row.addStretch(1)
+        self.gain_opened = self._box_values()
+
+    def _box_values(self):
+        return {k: (b.value() if b.decimals() else int(b.value()))
+                for k, b in self.gain_boxes.items()}
 
     def _gain_values(self):
-        """What goes in the config: 'preset' while every stage is at the default."""
+        """What goes in the config: 'preset' while every stage is at the default. Boxes
+        left alone change nothing, so gains saved for another receiver stay saved."""
         cls = self.gain_for
-        vals = {k: (b.value() if b.decimals() else int(b.value()))
-                for k, b in self.gain_boxes.items()}
+        vals = self._box_values()
+        if vals == self.gain_opened:
+            return self.cfg["advanced"].get("gain", "preset")
         return "preset" if vals == cls.preset else dict(vals, **{"for": cls.name})
 
     def _fill_rates(self):
@@ -1417,7 +1547,11 @@ class Settings(QDialog):
         self.rate.blockSignals(True)
         self.rate.clear()
         self.rate.addItem(f"Device default ({cls.default_rate / 1e6:g} Msps)", 0)
-        for r in cls.rates:
+        rates = list(cls.rates)
+        if (cur and cur not in rates and self.sdr.currentIndex() == self._sdr_opened
+                and _rate_fits(cls, cur)):
+            rates = sorted(rates + [cur])        # set by hand in the config file: keep it
+        for r in rates:
             self.rate.addItem(f"{r / 1e6:g} Msps", r)
         i = self.rate.findData(cur)
         self.rate.setCurrentIndex(i if i >= 0 else 0)
@@ -1467,7 +1601,8 @@ class Settings(QDialog):
         c["center_mhz"] = self.freq.value()
         c["sample_rate"] = int(self.rate.currentData() or 0)
         c["advanced"]["n_chan"] = int(self.fft.currentData())
-        c["advanced"]["api_bind"] = "0.0.0.0" if self.share.isChecked() else "127.0.0.1"
+        if self.share.isChecked() != self._share_opened:    # else an address set by hand stays
+            c["advanced"]["api_bind"] = "0.0.0.0" if self.share.isChecked() else "127.0.0.1"
         c["advanced"]["bias_tee"] = self.bias.isChecked()
         c["advanced"]["gain"] = self._gain_values()
         c["dish"].update({"rotator": self.rot.text().strip(),
@@ -1485,10 +1620,13 @@ class QuickSetup(QDialog):
     """The one page a new user needs: what this computer observes with and where the dish
     points, every field already filled with what the app will use. Settings has the rest."""
 
-    def __init__(self, cfg, parent=None):
+    def __init__(self, cfg, parent=None, current_sdr=None):
+        """current_sdr: the SDR this computer's node is using right now (None = not observing)."""
         super().__init__(parent)
         self.setWindowTitle("Quick setup (this computer's node)")
         self.cfg = cfg
+        self.current_sdr = current_sdr if current_sdr in sdr.SOURCES else None
+        self.auto_sdr = self.current_sdr
         outer = QVBoxLayout(self)
         intro = QLabel("Receiver and dish for this computer's node.")
         outer.addWidget(intro)
@@ -1504,7 +1642,7 @@ class QuickSetup(QDialog):
             self.sdr.addItem(label if ok else f"{label}  (not installed: {install})", name)
             if not ok:
                 self.sdr.model().item(self.sdr.count() - 1).setEnabled(False)
-        want = cfg.get("sdr") if cfg.get("sdr") in found else "auto"
+        want = cfg.get("sdr") if cfg.get("sdr") in found + ["synthetic"] else "auto"
         self.sdr.setCurrentIndex(max(self.sdr.findData(want), 0))
         row = QHBoxLayout()
         row.addWidget(self.sdr, 1)
@@ -1550,7 +1688,9 @@ class QuickSetup(QDialog):
         folder.setWordWrap(True)
         form.addRow("Data folder:", folder)
         adv = cfg["advanced"]
-        rest = QLabel(f"Sample rate: receiver default.   Channels: "
+        rate = int(cfg.get("sample_rate") or 0)
+        rest = QLabel(f"Sample rate: {f'{rate / 1e6:g} Msps' if rate else 'receiver default'}."
+                      f"   Channels: "
                       f"2^{int(adv['n_chan']).bit_length() - 1}.   Block: {adv['dwell_s']} s.   "
                       f"Bias tee: {'on' if adv.get('bias_tee', True) else 'off'}.   "
                       "Change these in Settings.")
@@ -1572,6 +1712,8 @@ class QuickSetup(QDialog):
     def _scanned(self, names, found):
         if isinstance(names, Exception):
             names = []
+        names = [n for n in names if n in sdr.SOURCES]
+        self.auto_sdr = self.auto_sdr or _auto_pick(names)
         labels = [sdr.SOURCES[n].label for n in names]
         self.sdr.setItemText(0, "Auto detect  (now: "
                              + (labels[0] if labels else "none detected") + ")")
@@ -1585,6 +1727,10 @@ class QuickSetup(QDialog):
                                     "The synthetic source runs without hardware.")
 
     def check_sdr(self):
+        if _in_use(self.current_sdr, self.sdr.currentData()):
+            self.sdr_result.setText(IN_USE_TEXT)
+            self.sdr_result.setStyleSheet("")
+            return
         self.check.setEnabled(False)
         self.sdr_result.setText("Opening the SDR...")
         self.sdr_result.setStyleSheet("")
@@ -1602,8 +1748,12 @@ class QuickSetup(QDialog):
         c = json.loads(json.dumps({k: v for k, v in self.cfg.items() if not k.startswith("_")}))
         c["_path"] = self.cfg.get("_path")
         c["_state_dir_set"] = self.cfg.get("_state_dir_set")
-        c["name"] = self.name.text().strip() or "my-dish"
+        if self.name.text().strip() != c.get("name"):
+            config.rename(c, self.name.text())       # it names the data folder
         c["sdr"] = self.sdr.currentData()
+        cls = sdr.SOURCES.get(c["sdr"]) or sdr.SOURCES.get(self.auto_sdr)
+        if cls and c["sdr"] != self.cfg.get("sdr") and not _rate_fits(cls, c.get("sample_rate")):
+            c["sample_rate"] = 0                     # the last receiver's rate: this one lacks it
         c["app"] = dict(c.get("app") or {}, narrowband=bool(self.mode.currentData()))
         c["center_mhz"] = self.freq.value()
         c["dish"].update({"az": self.az.value(), "el": self.el.value(),
@@ -1614,6 +1764,9 @@ class QuickSetup(QDialog):
             c["site"] = {"lat": self.lat.value(), "lon": self.lon.value(),
                          "alt": (c.get("site") or {}).get("alt") or 0}
         return c
+
+
+STOP_WAIT_S = 30        # an observer not gone this long after a stop is ended
 
 
 class Main(QMainWindow):
@@ -1688,7 +1841,7 @@ class Main(QMainWindow):
 
     def quick_setup(self):
         self.cfg = config.load(self.cfg_path)
-        dlg = QuickSetup(self.cfg, self)
+        dlg = QuickSetup(self.cfg, self, self._local_sdr())
         r = dlg.exec()
         self._retire_dialog(dlg)
         if r == QDialog.Accepted:
@@ -2103,6 +2256,10 @@ class Main(QMainWindow):
                      self.c_thumb):
                     if pane.text() == "Loading...":
                         pane.setText(f"Node {why}.")
+            ours = self.proc is not None and self.proc.state() != QProcess.NotRunning
+            self.a_stop.setEnabled(ours and not n.remote)
+            self.a_seti.setEnabled(not ours and not n.remote)
+            self.a_hline.setEnabled(not ours and not n.remote)
             return
         self._last_idx = idx
         s = idx.get("status", {})
@@ -2196,8 +2353,12 @@ class Main(QMainWindow):
             txt = d["log"].decode(errors="replace")[-20000:]
             if n.remote:
                 txt = txt.split("\n", 1)[-1] if "\n" in txt else txt   # drop the cut first line
-            if txt != self.log.toPlainText():
+            # compared with what was set last: the box holds the text its own way (line
+            # ends on Windows), and anything appended since is replaced as before
+            if (txt != getattr(self, "_log_src", None)
+                    or self.log.toPlainText() != getattr(self, "_log_set", None)):
                 self.log.setPlainText(txt)
+                self._log_src, self._log_set = txt, self.log.toPlainText()
                 self.log.verticalScrollBar().setValue(self.log.verticalScrollBar().maximum())
 
     def _refresh_waterfall(self, b, ts):
@@ -2386,6 +2547,7 @@ class Main(QMainWindow):
 
     def _refresh_cands(self, cands):
         head, rows = cands
+        rows = [r for r in rows if len(r) >= 9]         # a row cut short has no image name
         if head and self.c_thumb.text() == "Loading...":
             # the table has arrived; the pane only changes again when a row is clicked
             self.c_thumb.setText("No candidates yet." if not rows
@@ -2463,7 +2625,9 @@ class Main(QMainWindow):
             return
         self.cfg["last_download_dir"] = dest
         with contextlib.suppress(Exception):
-            config.save(self.cfg, self.cfg_path)
+            cfg = config.load(self.cfg_path)     # the file as it is now, not as the window read it
+            cfg["last_download_dir"] = dest
+            config.save(cfg, self.cfg_path)
         self._dl = Downloader(self.node(), kind, key, dest,
                               filters=bool((getattr(self, "_last_idx", None) or {}).get("tail")))
         self._dl.done.connect(lambda msg: QMessageBox.information(self, "Download", msg))
@@ -2498,6 +2662,7 @@ class Main(QMainWindow):
             self._child_out = (getattr(self, "_child_out", []) + txt.splitlines())[-40:]
 
     def _proc_finished(self, code, status):
+        self._clear_stop()
         if code != 0 and status == QProcess.NormalExit and not getattr(self, "_closing", False):
             # startup errors go to the child's output, which the log tab replaces with
             # survey.log on the next poll: show them where they stay
@@ -2511,11 +2676,20 @@ class Main(QMainWindow):
             QMessageBox.warning(self, "Aquila Radio Astronomy",
                                 f"Could not start the observer: {self.proc.errorString()}")
 
+    def _stop_file(self):
+        return os.path.join(getattr(self, "_proc_dir", None) or self.cfg["state_dir"], "stop")
+
+    def _write_stop(self):
+        with contextlib.suppress(OSError):
+            open(self._stop_file(), "w").close()
+
+    def _clear_stop(self):
+        with contextlib.suppress(OSError):
+            os.remove(self._stop_file())
+
     def _ask_stop(self):
         """The observer acts on the stop file within a second, on every OS; SIGTERM too."""
-        with contextlib.suppress(OSError):
-            d = getattr(self, "_proc_dir", None) or self.cfg["state_dir"]
-            open(os.path.join(d, "stop"), "w").close()
+        self._write_stop()
         if sys.platform != "win32":
             self.proc.terminate()
 
@@ -2524,11 +2698,20 @@ class Main(QMainWindow):
         if p is not None and p.state() != QProcess.NotRunning:
             self._ask_stop()
             self.sb.showMessage("Stopping...", 5000)
+            left = [STOP_WAIT_S]
 
-            def force():                       # not gone in 30 s: end it
-                if p.state() != QProcess.NotRunning:
+            def again():
+                # an observer still starting up clears the stop file it finds: ask each
+                # second until it is gone, and end it if it is not gone in time
+                if p.state() == QProcess.NotRunning:
+                    return
+                left[0] -= 1
+                if left[0] <= 0:
                     p.kill()
-            QTimer.singleShot(30000, force)
+                    return
+                self._write_stop()
+                QTimer.singleShot(1000, again)
+            QTimer.singleShot(1000, again)
         if refresh:
             self.refresh()
 
@@ -2546,9 +2729,14 @@ class Main(QMainWindow):
         self.timer.stop()
         if running:
             self._ask_stop()
-            if not p.waitForFinished(30000):
+            for _ in range(STOP_WAIT_S):
+                if p.waitForFinished(1000) or p.state() == QProcess.NotRunning:
+                    break
+                self._write_stop()               # one written during its start-up is cleared
+            else:
                 p.kill()
                 p.waitForFinished(5000)
+            self._clear_stop()
         for t in getattr(self, "_old_polls", []):
             t.cancel = True
         if getattr(self, "_poll", None) is not None:
@@ -2732,6 +2920,19 @@ def flush_std():
                 stream.flush()
 
 
+def hard_exit(rc):
+    """End the process now, with nothing run on the way out."""
+    if sys.platform == "win32":
+        # os._exit still lets every DLL run its unload code on Windows, and Qt's
+        # crashes there with the application object alive: an error record per close
+        import ctypes
+        k = ctypes.windll.kernel32
+        k.GetCurrentProcess.restype = ctypes.c_void_p
+        k.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        k.TerminateProcess(k.GetCurrentProcess(), rc & 0xFFFFFFFF)
+    os._exit(rc)
+
+
 def main(cfg_path=None):
     # the window must carry the name of its desktop entry or GNOME shows a generic
     # icon: X11 matches StartupWMClass against argv[0] (always "aquila-gui"), Wayland
@@ -2754,7 +2955,7 @@ def main(cfg_path=None):
     rc = app.exec()
     # a worker thread still waiting on a dead node must not abort the exit
     flush_std()
-    os._exit(rc)
+    hard_exit(rc)
 
 
 if __name__ == "__main__":

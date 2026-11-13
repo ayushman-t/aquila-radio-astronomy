@@ -1,3 +1,24 @@
+aquila-radio-astronomy (0.2.21) unstable; urgency=medium
+
+  * Settings: OK with the receiver on Auto no longer clears the saved gain and
+    sample rate.
+  * Windows: Stop, or closing the window, while the node is starting now stops it.
+    A receiver that sends no samples no longer holds the node.
+  * Windows: closing the app no longer leaves an error in the Windows event log.
+  * A table damaged by a power cut no longer stops the candidate list, the trimming
+    of old rows or the lists in the app.
+  * The candidate list is no longer worked out with the receiver the node is using.
+  * The window keeps updating when the address of a far node is not a node.
+  * RTL-SDR: the bias tee is switched off when it is set off. The test signal now
+    works on RTL-SDR and HackRF.
+  * Day view and 3D plot: no empty stripes at high sample rates or with scans far
+    apart.
+  * 3D plot: the numbers and labels at the side are no longer cut in a narrow
+    window.
+  * Smaller fixes in Settings, Quick setup, the Log tab and the sky map.
+
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Thu, 12 Nov 2026 18:48:09 -0500
+
 aquila-radio-astronomy (0.2.20) unstable; urgency=medium
 
   * Hydrogen line: an RTL-SDR whose band dips on both sides of its centre gave no

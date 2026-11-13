@@ -43,3 +43,16 @@ def test_gain_set_for_one_receiver_stays_with_it():
     saved = {"lna": 14, "mixer": 15, "vga": 5, "for": "hydrasdr"}
     assert sdr.HydraSDR(_cfg_gain("hydrasdr", saved)).gain["vga"] == 5
     assert sdr.HackRF(_cfg_gain("hackrf", saved)).gain == sdr.HackRF.preset
+
+
+def test_rtl_bias_tee_is_switched_off_as_well_as_on(monkeypatch):
+    """rtl_biast sets a pin that stays as it is until the dongle is unplugged: with the
+    bias tee off in Settings it must be told so, not left as the last run had it."""
+    ran = []
+    monkeypatch.setattr(sdr, "which", lambda tool: "/x/" + tool)
+    monkeypatch.setattr(sdr.subprocess, "run", lambda cmd, **kw: ran.append(cmd))
+    for bias, flag in ((True, "1"), (False, "0")):
+        cfg = _cfg_gain("rtlsdr", "preset")
+        cfg["advanced"]["bias_tee"] = bias
+        sdr.RtlSdr(cfg).command(1000)
+        assert ran[-1] == ["/x/rtl_biast", "-b", flag]

@@ -33,7 +33,8 @@ def channelize(src, n_chan, rows, dwell_s, settle_skip_s, log=print, raw_sink=No
             fr = next_frame()
             if fr is None:
                 err = src.finish()
-                log("SDR ended early: " + (err.strip()[-200:] or "no output"))
+                if not src.stopped:
+                    log("SDR ended early: " + (err.strip()[-200:] or "no output"))
                 return None, None, None
             if raw_sink is not None:
                 raw_sink.write(fr)

@@ -4,6 +4,7 @@
 everything below `advanced` has defaults that work and rarely needs touching."""
 import json
 import os
+import sys
 
 MIN_SETI_CHANNELS = 1 << 18      # below this a real drift cannot be resolved in a block
 
@@ -130,8 +131,12 @@ def derived_state_dir(name):
 
 def rename(cfg, name):
     """Change the node name; the data folder follows unless it was set by hand."""
-    name = str(name).replace("/", "-").replace("\\", "-").strip(" .") or "my-dish"
-    cfg["name"] = name                   # it names a folder: no path tricks
+    name = str(name)
+    # it names a folder: no path tricks, and on Windows none of the characters a folder cannot have
+    for ch in "/\\" + ('<>:"|?*' if sys.platform == "win32" else ""):
+        name = name.replace(ch, "-")
+    name = "".join(ch for ch in name if ch >= " ").strip(" .") or "my-dish"
+    cfg["name"] = name
     if not cfg.get("_state_dir_set"):
         cfg["state_dir"] = derived_state_dir(name)
 
