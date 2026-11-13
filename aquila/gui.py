@@ -819,6 +819,7 @@ class Map3DPane(QWidget):
     plotting backend is missing) it shows the picture the node drew instead."""
     HINT = "Drag to turn, right drag or the buttons to zoom, Reset for the first view"
     HOME = (32, -60)
+    ZOOM = 1.15                    # the size of the first view, where the box has the room
 
     def __init__(self, text):
         super().__init__()
@@ -829,7 +830,8 @@ class Map3DPane(QWidget):
         self._rows = self._key = None
         self._title = ""
         self._drawn = None
-        self._zoom = 1.15
+        self._zoom = self.ZOOM
+        self._fit = 1.0            # below 1: the box is too narrow for the full size
         self.log = None            # the window's log, for the view trace
         self._view = None          # (elev, azim, roll) after the last user action or redraw
         try:
@@ -842,6 +844,9 @@ class Map3DPane(QWidget):
         self.canvas.setToolTip(self.HINT)
         self.canvas.mpl_connect("button_release_event", self._released)
         self.canvas.mpl_connect("button_press_event", self._pressed)
+        self.canvas.mpl_connect("resize_event", lambda e: self._sized.start())
+        self._sized = QTimer(self, singleShot=True, interval=150)   # once the dragging rests
+        self._sized.timeout.connect(self._resized)
         self.fig2 = Figure(figsize=(5.5, 6.0), dpi=100, layout="constrained")
         self.canvas2 = FigureCanvasQTAgg(self.fig2)
         for c in (self.canvas, self.canvas2):
@@ -934,7 +939,7 @@ class Map3DPane(QWidget):
         self.ax = ax
         if view is not None:
             ax.view_init(elev=view[0], azim=view[1])
-        self._apply_zoom()
+        self._refit()
         map3d.lay(ax)
         self._trace("redraw", expect=view)
         n = getattr(ax, "_aquila_scans", None)
@@ -946,8 +951,22 @@ class Map3DPane(QWidget):
 
     def _apply_zoom(self):
         if self.ax is not None:
+            from . import map3d
             with contextlib.suppress(TypeError):
-                self.ax.set_box_aspect((1.8, 1.0, 0.7), zoom=self._zoom)
+                self.ax.set_box_aspect(map3d.BOX, zoom=self._zoom * self._fit)
+
+    def _refit(self):
+        """The numbers and labels of the first view stay inside the box whatever its shape
+        and however the view is turned. Zooming in past that is the user's own choice."""
+        if self.ax is not None:
+            from . import map3d
+            self._fit = map3d.fit(self.ax, self.ZOOM) / self.ZOOM
+            self._apply_zoom()
+
+    def _resized(self):
+        if self.ax is not None and self.isVisible():
+            self._refit()
+            self.canvas.draw_idle()
 
     def _relay(self):
         if self.ax is not None:
@@ -978,9 +997,9 @@ class Map3DPane(QWidget):
 
     def reset_view(self):
         if self.ax is not None:
-            self._zoom = 1.15
+            self._zoom = self.ZOOM
             self.ax.view_init(elev=self.HOME[0], azim=self.HOME[1])
-            self._apply_zoom()
+            self._refit()
             self._relay()
             self._trace("reset")
 
@@ -993,6 +1012,7 @@ class Map3DPane(QWidget):
     def turn(self, d_azim, d_elev):
         if self.ax is not None:
             self.ax.view_init(elev=self.ax.elev + d_elev, azim=self.ax.azim + d_azim)
+            self._refit()
             self._relay()
             self._trace("button")
 
@@ -1012,6 +1032,7 @@ class Map3DPane(QWidget):
     def _released(self, e):
         # turning keeps the order the surface was laid in for the old view: lay it again
         if self.ax is not None and e.inaxes is self.ax:
+            self._refit()
             self._relay()
             self._trace("after drag")
 

@@ -13,6 +13,8 @@ aquila-radio-astronomy (0.2.21) unstable; urgency=medium
     works on RTL-SDR and HackRF.
   * Day view and 3D plot: no empty stripes at high sample rates or with scans far
     apart.
+  * 3D plot: the numbers and labels at the side are no longer cut in a narrow
+    window.
   * Smaller fixes in Settings, Quick setup, the Log tab and the sky map.
 
  -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Thu, 12 Nov 2026 18:48:09 -0500

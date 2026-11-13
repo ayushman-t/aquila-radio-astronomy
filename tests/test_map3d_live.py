@@ -68,3 +68,48 @@ def test_surface_lays_for_any_view(tmp_path, azim):
     z = sorted(c.get_zorder() for c in ax._aquila_strips)
     assert z == list(range(len(z)))
     fig.savefig(tmp_path / "v.png")
+
+
+def _view(tmp_path, size):
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+    _rows(str(tmp_path), time.time() - 86400, 24)
+    fig, fig2 = Figure(figsize=size, dpi=100), Figure()
+    FigureCanvasAgg(fig)
+    FigureCanvasAgg(fig2)
+    ax = map3d.draw(fig, map3d.load(str(tmp_path)), "x", light=True, fig2=fig2)
+    assert ax is not None
+    return fig, ax
+
+
+def _cut(fig, ax):
+    """Pixels of the view's box, numbers and labels that fall outside the figure."""
+    fig.draw_without_rendering()
+    bb, f = map3d._extent(ax, fig.canvas.get_renderer()), fig.bbox
+    return max(f.x0 - bb.x0, bb.x1 - f.x1, f.y0 - bb.y0, bb.y1 - f.y1, 0.0)
+
+
+@pytest.mark.parametrize("size", [(6.96, 6.15), (6.96, 7.24), (9.36, 9.04), (6.82, 4.04)])
+def test_3d_numbers_and_labels_stay_inside_the_box(tmp_path, size):
+    fig, ax = _view(tmp_path, size)
+    for azim in range(-180, 180, 45):
+        for elev in (10, 32, 75):
+            ax.view_init(elev=elev, azim=azim)
+            z = map3d.fit(ax, 1.15)
+            assert 0.3 < z <= 1.15
+            assert _cut(fig, ax) == 0.0, (azim, elev)
+
+
+def test_3d_view_in_a_narrow_box_was_cut_and_a_wide_one_is_left_alone(tmp_path):
+    fig, ax = _view(tmp_path, (6.96, 6.15))             # the 3D box of the default window
+    ax.set_box_aspect(map3d.BOX, zoom=1.15)
+    assert _cut(fig, ax) > 20
+    assert map3d.fit(ax, 1.15) < 1.15 and _cut(fig, ax) == 0.0
+    (tmp_path / "wide").mkdir()
+    fig, ax = _view(tmp_path / "wide", (10.88, 8.04))
+    ax.set_box_aspect(map3d.BOX, zoom=1.15)
+    assert _cut(fig, ax) == 0.0
+    before = map3d._extent(ax, fig.canvas.get_renderer()).extents
+    assert map3d.fit(ax, 1.15) == 1.15
+    fig.draw_without_rendering()
+    assert np.allclose(map3d._extent(ax, fig.canvas.get_renderer()).extents, before)
