@@ -2899,6 +2899,19 @@ def flush_std():
                 stream.flush()
 
 
+def hard_exit(rc):
+    """End the process now, with nothing run on the way out."""
+    if sys.platform == "win32":
+        # os._exit still lets every DLL run its unload code on Windows, and Qt's
+        # crashes there with the application object alive: an error record per close
+        import ctypes
+        k = ctypes.windll.kernel32
+        k.GetCurrentProcess.restype = ctypes.c_void_p
+        k.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        k.TerminateProcess(k.GetCurrentProcess(), rc & 0xFFFFFFFF)
+    os._exit(rc)
+
+
 def main(cfg_path=None):
     # the window must carry the name of its desktop entry or GNOME shows a generic
     # icon: X11 matches StartupWMClass against argv[0] (always "aquila-gui"), Wayland
@@ -2921,7 +2934,7 @@ def main(cfg_path=None):
     rc = app.exec()
     # a worker thread still waiting on a dead node must not abort the exit
     flush_std()
-    os._exit(rc)
+    hard_exit(rc)
 
 
 if __name__ == "__main__":
