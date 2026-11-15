@@ -27,6 +27,10 @@ DEFAULTS = {
         "settle_skip_s": 3.0,
         "gain": "preset",          # preset | {"lna":..,"mixer":..,"vga":..} etc
         "bias_tee": True,
+        # RTL-SDR only: serial or index of the receiver to open, e.g. "NESDR".
+        # Needed when two dongles of the same model are attached, so the app
+        # cannot take the one another program is using. Empty = first found.
+        "device": "",
         "max_drift_hz_s": 4.0,
         "snr_thresh": 25.0,
         "dc_notch_hz": 3000,

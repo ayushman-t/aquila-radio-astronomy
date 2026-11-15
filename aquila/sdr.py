@@ -178,6 +178,12 @@ class Source:
         self.center_hz = int(round(cfg["center_mhz"] * 1e6))
         self.bias = bool(adv.get("bias_tee", True))
         self.gain = self.gains_from(adv.get("gain", "preset"))
+        # Which physical receiver to open. Two identical RTL-SDRs report the
+        # same vendor and product, so without this the tool silently takes
+        # index 0 and can capture the wrong radio - for example the one a
+        # satellite station is recording with. Empty means "let the tool
+        # choose", which keeps single-dongle setups working as before.
+        self.device = str(adv.get("device", "") or "").strip()
         self.injector = None
         if adv.get("inject"):
             from .inject import Injectors
@@ -400,13 +406,25 @@ class RtlSdr(Source):
     preset = {"gain": 49.6}   # maximum tuner gain, dB
     gain_controls = (("gain", "Gain dB", 0, 49.6, 0.1),)
 
+    def device_args(self):
+        """`-d` naming this receiver, or nothing when it was not pinned.
+
+        librtlsdr takes either an index or a serial here. A serial is the only
+        safe choice when two dongles of the same model are attached, because
+        the index depends on USB enumeration order and can change between
+        boots or replugs.
+        """
+        return ["-d", self.device] if self.device else []
+
     def command(self, nsamples):
         biast = which("rtl_biast")
         if biast:
-            subprocess.run([biast, "-b", "1" if self.bias else "0"],
+            subprocess.run([biast, "-b", "1" if self.bias else "0"]
+                           + self.device_args(),
                            capture_output=True, timeout=10,
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        return [self.tool, "-f", str(self.center_hz), "-s", str(self.rate),
+        return [self.tool] + self.device_args() + [
+                "-f", str(self.center_hz), "-s", str(self.rate),
                 "-g", str(self.gain["gain"]), "-n", str(nsamples), "-"]
 
     def samples(self, raw):
