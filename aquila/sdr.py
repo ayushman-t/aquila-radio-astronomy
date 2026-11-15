@@ -169,6 +169,14 @@ class Source:
                     out[key] = min(max(wanted[key], low), high)
         return out
 
+    bias_default = True       # bias tee state while Settings has not been told either way
+
+    @classmethod
+    def bias_on(cls, adv):
+        """The bias tee as set in Settings, or this receiver's default while it is unset."""
+        want = (adv or {}).get("bias_tee")
+        return cls.bias_default if want is None else bool(want)
+
     def __init__(self, cfg):
         self.cfg = cfg
         self.proc = None
@@ -176,7 +184,7 @@ class Source:
         adv = cfg["advanced"]
         self.rate = int(cfg["sample_rate"] or self.default_rate)
         self.center_hz = int(round(cfg["center_mhz"] * 1e6))
-        self.bias = bool(adv.get("bias_tee", True))
+        self.bias = self.bias_on(adv)
         self.gain = self.gains_from(adv.get("gain", "preset"))
         # Which physical receiver to open. Two identical RTL-SDRs report the
         # same vendor and product, so without this the tool silently takes
@@ -404,6 +412,8 @@ class RtlSdr(Source):
     default_rate = 2_400_000
     rates = (1_024_000, 2_048_000, 2_400_000, 2_560_000, 3_200_000)
     preset = {"gain": 49.6}   # maximum tuner gain, dB
+    # off until asked for: many RTL dongles feed a shorted antenna or have no bias tee
+    bias_default = False
     gain_controls = (("gain", "Gain dB", 0, 49.6, 0.1),)
 
     def device_args(self):

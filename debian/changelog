@@ -1,3 +1,14 @@
+aquila-radio-astronomy (0.2.22) unstable; urgency=medium
+
+  * 3D plot and day view: a peak is drawn as high as it was measured. A short peak
+    was drawn lower, by an amount that changed from day to day.
+  * RTL-SDR: the bias tee is off until it is turned on in Settings. An install that
+    already has it on keeps it on.
+  * RTL-SDR: with two dongles on one computer, the one to use can be named in the
+    config file (advanced.device, a serial or an index).
+
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Sat, 14 Nov 2026 21:33:32 -0500
+
 aquila-radio-astronomy (0.2.21) unstable; urgency=medium
 
   * Settings: OK with the receiver on Auto no longer clears the saved gain and

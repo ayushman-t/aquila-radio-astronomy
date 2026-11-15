@@ -56,3 +56,38 @@ def test_rtl_bias_tee_is_switched_off_as_well_as_on(monkeypatch):
         cfg["advanced"]["bias_tee"] = bias
         sdr.RtlSdr(cfg).command(1000)
         assert ran[-1] == ["/x/rtl_biast", "-b", flag]
+
+
+def test_bias_tee_is_off_on_an_rtl_until_asked_for():
+    """Unset in the config, the bias tee follows the receiver: an RTL-SDR stays off, the
+    others power their LNA. A value from Settings wins on every receiver."""
+    from aquila import config
+    assert config.DEFAULTS["advanced"]["bias_tee"] is None
+    for name, default in (("rtlsdr", False), ("airspy", True), ("hydrasdr", True),
+                          ("hackrf", True)):
+        cls = sdr.SOURCES[name]
+        assert cls.bias_on({}) is default
+        assert cls.bias_on({"bias_tee": None}) is default
+        assert cls.bias_on({"bias_tee": True}) is True
+        assert cls.bias_on({"bias_tee": False}) is False
+    c = _cfg_gain("rtlsdr", "preset")
+    c["advanced"]["bias_tee"] = None
+    assert sdr.RtlSdr(c).bias is False
+
+
+def test_unset_bias_tee_is_left_out_of_the_saved_file(tmp_path):
+    """An older version reads a missing bias tee as on, and "null" as off: a config saved
+    here and opened there must not switch off the LNA of an Airspy."""
+    import json
+
+    from aquila import config
+    p = str(tmp_path / "config.json")
+    c = config.load(p)
+    config.save(c, p)
+    assert "bias_tee" not in json.load(open(p))["advanced"]
+    assert config.load(p)["advanced"]["bias_tee"] is None
+    for want in (True, False):
+        c["advanced"]["bias_tee"] = want
+        config.save(c, p)
+        assert json.load(open(p))["advanced"]["bias_tee"] is want
+        assert config.load(p)["advanced"]["bias_tee"] is want

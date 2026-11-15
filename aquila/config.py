@@ -26,7 +26,8 @@ DEFAULTS = {
         "dwell_s": 150,
         "settle_skip_s": 3.0,
         "gain": "preset",          # preset | {"lna":..,"mixer":..,"vga":..} etc
-        "bias_tee": True,
+        "bias_tee": None,          # None = the receiver's own default: off on an RTL-SDR,
+                                   # on for the others. True or False once set in Settings
         # RTL-SDR only: serial or index of the receiver to open, e.g. "NESDR".
         # Needed when two dongles of the same model are attached, so the app
         # cannot take the one another program is using. Empty = first found.
@@ -151,6 +152,11 @@ def save(cfg, path=None):
     out = {k: v for k, v in cfg.items() if not k.startswith("_")}
     if not cfg.get("_state_dir_set"):
         out["state_dir"] = ""
+    adv = out.get("advanced")
+    if isinstance(adv, dict) and adv.get("bias_tee", 0) is None:
+        # not set either way: left out of the file, so an older version reading it
+        # keeps its own default instead of taking "none" for off
+        out["advanced"] = {k: v for k, v in adv.items() if k != "bias_tee"}
     tmp = path + ".tmp"
     # it holds the control token: owner only, and never a half-written file
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

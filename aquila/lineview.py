@@ -2,11 +2,10 @@
 velocity against time. Both draw on a figure handed in, at whatever size it has, so the
 app can fill a box with them instead of fitting a picture into it."""
 import time
-import warnings
 
 import numpy as np
 
-from .map3d import MIN_ROWS, V_MID, V_SHOW, bridge
+from .map3d import MIN_ROWS, V_MID, V_SHOW, bridge, scale, together
 
 DAY_S = 86400.0
 DAY_BINS = 96               # 15 minutes each
@@ -82,9 +81,7 @@ def day_grid(rows, end=None):
     keep = np.abs(V_MID) <= V_SHOW
     z = np.full((DAY_BINS, int(keep.sum())), np.nan, np.float32)
     for i in np.unique(idx):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)     # a velocity with no data
-            z[i] = np.nanmedian(rows["spec"][idx == i][:, keep], axis=0)
+        z[i] = together(rows["spec"][idx == i][:, keep])
     bridge(z, t0, step, rows, keep)
     if not np.isfinite(z).any():
         return None
@@ -99,11 +96,7 @@ def draw_day(fig, rows, tz_s=None, mark=None, end=None):
     if g is None:
         return False
     te, v, z = g
-    finite = z[np.isfinite(z)]
-    lo, hi = float(np.percentile(finite, 1)), float(np.percentile(finite, 99.9))
-    lo = min(lo, 0.0)
-    if hi <= lo:
-        hi = lo + 1e-3
+    lo, hi = scale(z)
     own = tz_s is None
     if own:
         tz_s = time.localtime(te[-1]).tm_gmtoff

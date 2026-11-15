@@ -18,6 +18,8 @@ PNG = "map3d.png"
 MIN_ROWS = 3
 YOUNG_ROWS = 24
 V_SHOW = 150.0
+BIN_S = 900.0                     # one time row of the plot
+MAX_COLS = 1000                   # time rows the map draws at most
 BOX = (1.8, 1.0, 0.7)             # the 3D box: time, velocity, dB
 
 
@@ -40,6 +42,18 @@ def binned(v, db):
             near = (vs[j] - vs[j - 1]) <= 1.5 * chan
             out[empty[near]] = np.interp(V_MID[empty[near]], vs, ds)
     return out.astype(np.float32)
+
+
+def together(spec):
+    """The scans of one time bin as one row. Three or more: their median, so one bad scan
+    does not stand up as a ridge. Two: the stronger one as measured, since a median of two
+    is their average and would lower a short peak whenever two scans share a bin."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)         # a velocity with no data
+        if spec.shape[0] >= 3:
+            return np.nanmedian(spec, axis=0)
+        peak = np.nanmax(spec, axis=1)
+    return spec[int(np.argmax(np.where(np.isfinite(peak), peak, -np.inf)))]
 
 
 def bridge(z, t0, step, rows, cols=slice(None)):
@@ -127,16 +141,17 @@ def grid(rows, days, now=None):
     t0, t1 = float(rows["t"].min()), float(rows["t"].max())
     if t1 <= t0:
         return None
-    step = max(900.0, (t1 - t0) / 240.0)
+    # always 15 minutes: a wider bin averages a peak that passes in half an hour with the
+    # weaker sky beside it, by an amount that changes from day to day. draw() thins what
+    # is too much to draw, and keeps the peaks when it does.
+    step = BIN_S
     if t1 - t0 < 2 * step:                 # the first scans: no bins yet, so no empty ones
         step = float(np.diff(np.sort(rows["t"])).max()) * 1.001
     idx = ((rows["t"] - t0) / step + 1e-6).astype(int)
     nb = int(idx.max()) + 1
     z = np.full((nb, V_MID.size), np.nan, np.float32)
     for i in np.unique(idx):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)     # a velocity with no data
-            z[i] = np.nanmedian(rows["spec"][idx == i], axis=0)
+        z[i] = together(rows["spec"][idx == i])
     bridge(z, t0, step, rows)
     have = np.isfinite(rows["spec"]).mean(0) > 0.5
     if not have.any():
@@ -193,16 +208,39 @@ def render(hdir, title="", days=7, now=None):
     return True
 
 
-def _lighter(x, z, most):
-    """At most `most` time rows, by averaging neighbours, for a plot that turns smoothly."""
+def thin(x, z, most):
+    """At most `most` time rows for the drawing. Each group of neighbouring rows is shown
+    by its strongest one, as measured: an average would lower a peak that lasts less than
+    the group, by an amount that depends on where the group edges fall, so the same sky
+    would read differently from day to day. Groups are counted back from the newest row."""
     k = int(np.ceil(x.size / most))
     if k <= 1:
         return x, z
-    n = x.size // k * k
+    pad = -x.size % k
+    zp = np.concatenate([np.full((pad, z.shape[1]), np.nan, z.dtype), z]).reshape(-1, k, z.shape[1])
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)
-        zz = np.nanmean(z[:n].reshape(-1, k, z.shape[1]), axis=1)
-    return x[:n].reshape(-1, k).mean(1), zz
+        warnings.simplefilter("ignore", RuntimeWarning)         # a row with no data
+        peak = np.nanmax(zp, axis=2)
+    best = np.argmax(np.where(np.isfinite(peak), peak, -np.inf), axis=1)
+    step = float(x[1] - x[0])
+    xp = np.concatenate([x[0] - step * np.arange(pad, 0, -1), x]).reshape(-1, k)
+    return xp.mean(1), zp[np.arange(zp.shape[0]), best]
+
+
+def scale(z):
+    """Bottom and top of the dB scale for z[time, velocity]. The top is the highest peak
+    that the row measured before or after it also shows at half its height or more, so
+    the sky's own peaks are never cut short and one bad scan standing alone does not set
+    the scale."""
+    finite = z[np.isfinite(z)]
+    lo, most = float(np.percentile(finite, 1)), float(np.percentile(finite, 99.9))
+    lo = min(lo, 0.0)
+    rows = z[np.isfinite(z).any(axis=1)]                 # a break in observing is no neighbour
+    peak = np.nanmax(np.where(np.isfinite(rows), rows, -np.inf), axis=1) - lo
+    beside = np.maximum(np.r_[0.0, peak[:-1]], np.r_[peak[1:], 0.0])
+    held = peak[beside >= 0.5 * peak]
+    hi = lo + float(held.max()) if held.size else most
+    return lo, hi if hi > lo else lo + 1e-3          # a flat history still needs a scale
 
 
 def draw(fig, rows, title="", days=7, now=None, light=False, fig2=None):
@@ -232,11 +270,10 @@ def draw(fig, rows, title="", days=7, now=None, light=False, fig2=None):
     v, z = v[keep], z[:, keep]
     if v.size < 4:
         return None
+    lo, hi = scale(z)
+    t, z = thin(t, z, MAX_COLS)      # a month of 15 minute rows is more than the map can show
     # One offset for the whole axis: local time steps back when clocks change.
     x = date2num(dt.datetime.fromtimestamp(t[-1])) - (t[-1] - t) / 86400.0
-    finite = z[np.isfinite(z)]
-    lo, hi = float(np.percentile(finite, 1)), float(np.percentile(finite, 99.9))
-    lo = min(lo, 0.0)
     fig.clear()
     if fig2 is None:
         fig.suptitle(f"{title}   {n} scans".strip(), fontsize=12)
@@ -245,10 +282,14 @@ def draw(fig, rows, title="", days=7, now=None, light=False, fig2=None):
     else:
         ax = fig.add_subplot(111, projection="3d", computed_zorder=False)
     ax._aquila_scans = n
-    xs, vs, zs = x, v, z
-    if light:
-        xs, zs = _lighter(x, z, 150)
-        vs, zs = v[::2], zs[:, ::2]
+    xs, zs = thin(x, z, 150 if light else 240)
+    vs = v
+    if light and v.size >= 4:
+        n2 = v.size // 2 * 2                       # pairs of velocities, the higher of each
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            zs = np.nanmax(zs[:, :n2].reshape(zs.shape[0], -1, 2), axis=2)
+        vs = v[:n2].reshape(-1, 2).mean(1)
     # A hole in the surface reads as a tear, so a break lies flat on the floor in grey.
     missing = ~np.isfinite(zs)
     zc = np.where(missing, lo, np.clip(zs, lo, hi))

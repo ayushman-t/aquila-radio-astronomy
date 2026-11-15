@@ -1285,7 +1285,10 @@ class Settings(QDialog):
         self.rate = QComboBox()
         form.addRow("Bandwidth (sample rate):", self.rate)
         self.bias = QCheckBox("Bias tee: power the LNA through the coax")
-        self.bias.setChecked(bool(cfg["advanced"].get("bias_tee", True)))
+        # unset: the box follows the chosen receiver until it is clicked
+        self._bias_set = cfg["advanced"].get("bias_tee") is not None
+        self.bias.setChecked(bool(cfg["advanced"].get("bias_tee")))
+        self.bias.clicked.connect(lambda: setattr(self, "_bias_set", True))
         self.bias.setToolTip("Off if the LNA has its own supply or there is no LNA. "
                              "Takes effect when observing is next started.")
         form.addRow("", self.bias)
@@ -1507,6 +1510,8 @@ class Settings(QDialog):
         if cls is self.gain_for:
             return
         self.gain_for = cls
+        if not self._bias_set:
+            self.bias.setChecked(cls.bias_default)
         while self.gain_row.count():
             w = self.gain_row.takeAt(0).widget()
             if w is not None:
@@ -1603,7 +1608,7 @@ class Settings(QDialog):
         c["advanced"]["n_chan"] = int(self.fft.currentData())
         if self.share.isChecked() != self._share_opened:    # else an address set by hand stays
             c["advanced"]["api_bind"] = "0.0.0.0" if self.share.isChecked() else "127.0.0.1"
-        c["advanced"]["bias_tee"] = self.bias.isChecked()
+        c["advanced"]["bias_tee"] = self.bias.isChecked() if self._bias_set else None
         c["advanced"]["gain"] = self._gain_values()
         c["dish"].update({"rotator": self.rot.text().strip(),
                           "az": self.az.value(), "el": self.el.value(),
@@ -1689,14 +1694,17 @@ class QuickSetup(QDialog):
         form.addRow("Data folder:", folder)
         adv = cfg["advanced"]
         rate = int(cfg.get("sample_rate") or 0)
-        rest = QLabel(f"Sample rate: {f'{rate / 1e6:g} Msps' if rate else 'receiver default'}."
-                      f"   Channels: "
-                      f"2^{int(adv['n_chan']).bit_length() - 1}.   Block: {adv['dwell_s']} s.   "
-                      f"Bias tee: {'on' if adv.get('bias_tee', True) else 'off'}.   "
-                      "Change these in Settings.")
-        rest.setWordWrap(True)
-        rest.setStyleSheet("color: gray")
-        outer.addWidget(rest)
+        self._rest_text = (
+            f"Sample rate: {f'{rate / 1e6:g} Msps' if rate else 'receiver default'}."
+            f"   Channels: "
+            f"2^{int(adv['n_chan']).bit_length() - 1}.   Block: {adv['dwell_s']} s.   "
+            "Bias tee: {}.   Change these in Settings.")
+        self.rest = QLabel()
+        self.rest.setWordWrap(True)
+        self.rest.setStyleSheet("color: gray")
+        outer.addWidget(self.rest)
+        self.sdr.currentIndexChanged.connect(self._show_rest)
+        self._show_rest()
         row = QHBoxLayout()
         more = QPushButton("All settings...")
         more.clicked.connect(lambda: self.done(2))
@@ -1709,11 +1717,18 @@ class QuickSetup(QDialog):
         outer.addLayout(row)
         self.resize(640, self.sizeHint().height())
 
+    def _show_rest(self, *_):
+        """The fixed settings line. The bias tee is the chosen receiver's while unset."""
+        cls = sdr.SOURCES.get(self.sdr.currentData()) or sdr.SOURCES.get(self.auto_sdr)
+        on = (cls or sdr.Source).bias_on(self.cfg["advanced"])
+        self.rest.setText(self._rest_text.format("on" if on else "off"))
+
     def _scanned(self, names, found):
         if isinstance(names, Exception):
             names = []
         names = [n for n in names if n in sdr.SOURCES]
         self.auto_sdr = self.auto_sdr or _auto_pick(names)
+        self._show_rest()
         labels = [sdr.SOURCES[n].label for n in names]
         self.sdr.setItemText(0, "Auto detect  (now: "
                              + (labels[0] if labels else "none detected") + ")")
