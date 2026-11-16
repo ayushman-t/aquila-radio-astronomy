@@ -30,14 +30,6 @@ jobs:
         with:
           name: snap
           path: ${{ steps.build.outputs.snap }}
-      # publish to the Snap Store once SNAPCRAFT_STORE_CREDENTIALS is set (snapcraft export-login)
-      - if: env.SNAP_CREDS != ''
-        uses: snapcore/action-publish@v1
-        env:
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-        with:
-          snap: ${{ steps.build.outputs.snap }}
-          release: edge
 
   windows:
     runs-on: windows-latest
