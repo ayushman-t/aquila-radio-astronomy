@@ -21,7 +21,8 @@ def test_sysfs_denied_falls_back_to_lsusb_and_firmware(monkeypatch):
     monkeypatch.setattr(os, "listdir", denied)
 
     def fake_run(cmd, **k):
-        out = {"lsusb": LSUSB, "airspy_info": INFO}[cmd[0]]
+        out = {"lsusb": LSUSB, "airspy_info": INFO}[os.path.basename(cmd[0])]
         return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
     monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(sdr, "which", lambda tool: "/usr/bin/" + tool)
     assert sdr.attached() == ["hydrasdr", "rtlsdr"]

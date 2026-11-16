@@ -26,6 +26,10 @@ def app(monkeypatch):
         if name != "synthetic":
             monkeypatch.setattr(cls, "available", classmethod(lambda c: c.name in a.installed))
     monkeypatch.setattr(sdr, "attached", lambda: list(a.plugged))
+    a.dev_rates = []
+    monkeypatch.setattr(sdr, "airspy_rates", lambda: list(a.dev_rates))
+    a.units = []
+    monkeypatch.setattr(sdr, "rtl_devices", lambda: list(a.units))
     monkeypatch.setattr(sdr, "usb_devices", lambda: [])
     monkeypatch.setattr(sdr, "probe", lambda *x, **k: (False, "not opened in a test"))
     monkeypatch.setattr(gui, "_lan_ip", lambda: "lan-ip")
@@ -360,3 +364,167 @@ def test_closing_during_start_up_does_not_hang(app, window, monkeypatch):
     assert time.time() - t0 < 8
     assert p.exitStatus() == QProcess.NormalExit and p.exitCode() == 0
     assert not os.path.exists(os.path.join(w._proc_dir, "stop"))
+
+
+def _settings(qapp, tmp_path, **over):
+    cfg = config.load(scratch(tmp_path, **over))
+    dlg = gui.Settings(cfg, None, None)
+    assert pump(qapp, lambda: not dlg._scan.isRunning())
+    pump(qapp, lambda: False, 0.2)
+    return dlg
+
+
+def _shown_rates(dlg):
+    return [dlg.rate.itemData(i) for i in range(dlg.rate.count())]
+
+
+@pytest.mark.parametrize("own,default,listed", [
+    ([3_000_000, 6_000_000], "3 Msps", [0, 3_000_000, 6_000_000]),          # Airspy Mini
+    ([2_500_000, 10_000_000], "2.5 Msps", [0, 2_500_000, 10_000_000]),      # Airspy R2
+    ([], "3 Msps", [0, 2_500_000, 3_000_000, 6_000_000, 10_000_000]),       # could not be asked
+])
+def test_settings_lists_the_rates_the_plugged_airspy_has(app, tmp_path, own, default, listed):
+    app.plugged = ["airspy"]
+    app.dev_rates = own
+    dlg = _settings(app, tmp_path, sdr="airspy")
+    assert _shown_rates(dlg) == listed
+    assert dlg.rate.itemText(0) == f"Device default ({default})"
+    assert dlg.apply()["sample_rate"] == 0
+
+
+def test_settings_keeps_the_list_of_a_receiver_that_is_not_the_one_plugged_in(app, tmp_path):
+    """A HydraSDR is plugged in and Airspy is picked: its rates are not the Airspy's."""
+    app.installed = {"airspy", "hydrasdr"}
+    app.plugged = ["hydrasdr"]
+    app.dev_rates = [2_500_000, 5_000_000, 10_000_000]
+    dlg = _settings(app, tmp_path, sdr="airspy")
+    assert _shown_rates(dlg) == [0, 2_500_000, 3_000_000, 6_000_000, 10_000_000]
+    dlg.sdr.setCurrentIndex(dlg.sdr.findData("hydrasdr"))
+    assert _shown_rates(dlg) == [0, 2_500_000, 5_000_000, 10_000_000]
+    assert dlg.rate.itemText(0) == "Device default (5 Msps)"
+
+
+def test_settings_keeps_a_saved_rate_the_receiver_does_not_list(app, tmp_path):
+    app.plugged = ["airspy"]
+    app.dev_rates = [2_500_000, 10_000_000]
+    dlg = _settings(app, tmp_path, sdr="airspy", sample_rate=3_000_000)
+    assert 3_000_000 in _shown_rates(dlg)
+    assert dlg.apply()["sample_rate"] == 3_000_000
+
+
+def test_settings_greys_out_what_only_the_search_uses(app, tmp_path):
+    dlg = _settings(app, tmp_path, app={"observe_on_open": False, "narrowband": False},
+                    save={"raw_iq": True}, center_mhz=1421.5)
+    assert not dlg.freq.isEnabled() and not dlg.s_raw.isEnabled() and not dlg.fft.isEnabled()
+    assert "Not used" in dlg.fnote.text() and "Not used" in dlg.fft_info.text()
+    c = dlg.apply()
+    assert c["center_mhz"] == 1421.5 and c["save"]["raw_iq"] is True     # kept, not wiped
+    dlg.narrow.click()
+    assert dlg.freq.isEnabled() and dlg.s_raw.isEnabled() and dlg.fft.isEnabled()
+    assert "away from the hydrogen line" in dlg.fnote.text()
+    assert "both run" in dlg.fft_info.text()
+
+
+def test_quick_setup_centre_frequency_is_the_search_s(app, tmp_path):
+    cfg = config.load(scratch(tmp_path, app={"observe_on_open": False, "narrowband": False}))
+    dlg = gui.QuickSetup(cfg, None, None)
+    assert not dlg.freq.isEnabled()
+    dlg.mode.setCurrentIndex(1)
+    assert dlg.freq.isEnabled()
+
+
+# ---- two receivers of the same kind
+
+def _entries(dlg):
+    return [(dlg.sdr.itemText(i), dlg.sdr.itemData(i)) for i in range(dlg.sdr.count())
+            if str(dlg.sdr.itemData(i)).startswith("rtlsdr")]
+
+
+@pytest.mark.parametrize("dialog", [gui.Settings, gui.QuickSetup])
+def test_one_rtl_sdr_adds_nothing_to_the_list(app, tmp_path, dialog):
+    app.plugged = ["rtlsdr"]
+    app.units = [(0, "00000001")]
+    dlg = dialog(config.load(scratch(tmp_path, sdr="rtlsdr")), None, None)
+    assert pump(app, lambda: "onnected" in dlg.sdr_result.text())
+    assert _entries(dlg) == [("RTL-SDR", "rtlsdr")]
+    assert dlg.apply()["advanced"]["device"] == ""
+    retire(app, dlg)
+
+
+@pytest.mark.parametrize("dialog", [gui.Settings, gui.QuickSetup])
+def test_two_rtl_sdrs_are_listed_one_by_one(app, tmp_path, dialog):
+    app.plugged = ["rtlsdr"]
+    app.units = [(0, "NESDR"), (1, "V4-ROOF")]
+    dlg = dialog(config.load(scratch(tmp_path, sdr="rtlsdr")), None, None)
+    assert pump(app, lambda: dlg.sdr.findData("rtlsdr|NESDR") >= 0)
+    assert _entries(dlg) == [("RTL-SDR", "rtlsdr"),
+                             ("RTL-SDR #1 (serial NESDR)", "rtlsdr|NESDR"),
+                             ("RTL-SDR #2 (serial V4-ROOF)", "rtlsdr|V4-ROOF")]
+    assert dlg.sdr.currentData() == "rtlsdr"          # nothing picked for the user
+    assert "same serial" not in dlg.sdr_result.text()
+    dlg.sdr.setCurrentIndex(dlg.sdr.findData("rtlsdr|V4-ROOF"))
+    out = dlg.apply()
+    assert out["sdr"] == "rtlsdr" and out["advanced"]["device"] == "V4-ROOF"
+    assert sdr.RtlSdr(out).device_args() == ["-d", "V4-ROOF"]
+    dlg.sdr.setCurrentIndex(dlg.sdr.findData("rtlsdr"))
+    assert dlg.apply()["advanced"]["device"] == ""
+    retire(app, dlg)
+
+
+def test_two_rtl_sdrs_with_one_serial_are_picked_by_number(app, tmp_path):
+    app.plugged = ["rtlsdr"]
+    app.units = [(0, "00000001"), (1, "00000001")]
+    dlg = gui.Settings(config.load(scratch(tmp_path, sdr="auto")), None, None)
+    assert pump(app, lambda: dlg.sdr.findData("rtlsdr|1") >= 0)
+    assert _entries(dlg)[1:] == [("RTL-SDR #1 (serial 00000001)", "rtlsdr|0"),
+                                 ("RTL-SDR #2 (serial 00000001)", "rtlsdr|1")]
+    assert dlg.sdr.currentData() == "auto"
+    assert gui.SAME_SERIAL_TEXT in dlg.sdr_result.text()
+    retire(app, dlg)
+
+
+@pytest.mark.parametrize("dialog", [gui.Settings, gui.QuickSetup])
+def test_the_saved_rtl_sdr_stays_picked(app, tmp_path, dialog):
+    """Shown at once, before the receivers are looked for, and after: OK changes nothing."""
+    app.plugged = ["rtlsdr"]
+    app.units = [(0, "NESDR"), (1, "V4-ROOF")]
+    cfg = config.load(scratch(tmp_path, sdr="rtlsdr", advanced={"device": "V4-ROOF"}))
+    dlg = dialog(cfg, None, None)
+    assert dlg.sdr.currentData() == "rtlsdr|V4-ROOF"
+    assert dlg.apply()["advanced"]["device"] == "V4-ROOF"
+    assert pump(app, lambda: dlg.sdr.findData("rtlsdr|NESDR") >= 0)
+    assert _entries(dlg) == [("RTL-SDR", "rtlsdr"),
+                             ("RTL-SDR #1 (serial NESDR)", "rtlsdr|NESDR"),
+                             ("RTL-SDR #2 (serial V4-ROOF)", "rtlsdr|V4-ROOF")]
+    assert dlg.sdr.currentData() == "rtlsdr|V4-ROOF"
+    out = dlg.apply()
+    assert out["sdr"] == "rtlsdr" and out["advanced"]["device"] == "V4-ROOF"
+    retire(app, dlg)
+
+
+def test_a_saved_rtl_sdr_stays_while_observing_or_unplugged(app, tmp_path):
+    cfg = config.load(scratch(tmp_path, sdr="rtlsdr", advanced={"device": "NESDR"}))
+    dlg = gui.Settings(cfg, None, "rtlsdr")              # observing: nothing is looked for
+    assert _entries(dlg) == [("RTL-SDR", "rtlsdr"), ("RTL-SDR (NESDR)", "rtlsdr|NESDR")]
+    assert dlg.gain_for is sdr.SOURCES["rtlsdr"]
+    assert dlg.apply()["advanced"]["device"] == "NESDR"
+    retire(app, dlg)
+
+
+def test_another_receiver_picked_leaves_the_saved_rtl_sdr_alone(app, tmp_path):
+    cfg = config.load(scratch(tmp_path, sdr="rtlsdr", advanced={"device": "NESDR"}))
+    dlg = gui.Settings(cfg, None, None)
+    dlg.sdr.setCurrentIndex(dlg.sdr.findData("airspy"))
+    out = dlg.apply()
+    assert out["sdr"] == "airspy" and out["advanced"]["device"] == "NESDR"
+    retire(app, dlg)
+
+
+def test_a_saved_rtl_sdr_is_not_offered_without_its_software(app, tmp_path):
+    app.installed = {"airspy"}
+    cfg = config.load(scratch(tmp_path, sdr="rtlsdr", advanced={"device": "NESDR"}))
+    dlg = gui.QuickSetup(cfg, None, None)
+    assert dlg.sdr.findData("rtlsdr|NESDR") < 0
+    out = dlg.apply()
+    assert out["sdr"] == "auto" and out["advanced"]["device"] == "NESDR"   # left as saved
+    retire(app, dlg)

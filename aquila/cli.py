@@ -71,7 +71,9 @@ def cmd_hline(args):
                   token=cfg["advanced"].get("api_token", ""))
     except OSError as e:
         print(f"api not started: {e}")
-    h.run(blocks=args.blocks or 0)
+    done = h.run(blocks=args.blocks or 0)
+    if args.blocks and h.running and done < args.blocks:
+        sys.exit(1)                 # gave up on the receiver, not stopped by the user
 
 
 def cmd_cal(args):

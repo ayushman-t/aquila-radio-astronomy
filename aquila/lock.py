@@ -115,3 +115,54 @@ def watch_stop(state_dir, stop, every_s=1.0):
     t = threading.Thread(target=loop, daemon=True)
     t.start()
     return t
+
+
+APP_PID_ENV = "AQUILA_APP_PID"
+
+
+def process_alive(pid):
+    """True while a process with this id exists."""
+    if sys.platform == "win32":
+        import ctypes
+        k = ctypes.windll.kernel32
+        k.OpenProcess.restype = ctypes.c_void_p
+        k.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        k.CloseHandle.argtypes = [ctypes.c_void_p]
+        h = k.OpenProcess(0x00100000, False, int(pid))        # SYNCHRONIZE
+        if not h:
+            return False
+        try:
+            return k.WaitForSingleObject(h, 0) == 0x102       # WAIT_TIMEOUT: still running
+        finally:
+            k.CloseHandle(h)
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True                 # there, but not ours to signal
+    return True
+
+
+def watch_app(stop, every_s=2.0):
+    """An observer started by the desktop app ends with it. The app stops its observer
+    when the window closes; when the app is killed or crashes instead, nothing would,
+    and the observer would keep the receiver and the data folder with no window to stop
+    it from. A node started as a service or from a shell has no app and is left alone."""
+    import threading
+    try:
+        pid = int(os.environ.get(APP_PID_ENV) or 0)
+    except ValueError:
+        pid = 0
+    if pid <= 0:
+        return None
+
+    def loop():
+        while True:
+            time.sleep(every_s)
+            if not process_alive(pid):
+                stop()
+                return
+    t = threading.Thread(target=loop, daemon=True)
+    t.start()
+    return t

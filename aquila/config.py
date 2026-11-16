@@ -31,6 +31,7 @@ DEFAULTS = {
         # RTL-SDR only: serial or index of the receiver to open, e.g. "NESDR".
         # Needed when two dongles of the same model are attached, so the app
         # cannot take the one another program is using. Empty = first found.
+        # Settings lists them one by one when two are plugged in.
         "device": "",
         "max_drift_hz_s": 4.0,
         "snr_thresh": 25.0,

@@ -1,3 +1,20 @@
+aquila-radio-astronomy (0.2.23) unstable; urgency=medium
+
+  * Hydrogen line only: three parts of a scan are on the line and one on the
+    reference, as in the narrowband search. It was half and half.
+  * Settings: centre frequency, FFT size and raw IQ are greyed out while the
+    narrowband search is off, since a hydrogen line scan does not use them. The log
+    and the status show the frequency the receiver is tuned to.
+  * Settings: the bandwidth list shows the sample rates the plugged in Airspy or
+    HydraSDR has, and the default is one it has.
+  * Airspy chosen with a HydraSDR plugged in now observes.
+  * RTL-SDR: with two dongles plugged in, Settings and the first setup list them
+    one by one (RTL-SDR #1, #2) so the one to use can be picked.
+  * An observer no longer stays running after the app is killed or crashes.
+  * hline --blocks ends with an error when no scan could be made.
+
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Mon, 16 Nov 2026 00:08:41 -0500
+
 aquila-radio-astronomy (0.2.22) unstable; urgency=medium
 
   * 3D plot and day view: a peak is drawn as high as it was measured. A short peak
