@@ -16,7 +16,7 @@ import numpy as np
 from . import api, config, curate, dsp, sdr
 from .config import MIN_SETI_CHANNELS
 from .hline import HLine, fs_search_blocks, fs_tunings
-from .lock import acquire_lock, release_lock, watch_stop
+from .lock import acquire_lock, release_lock, watch_app, watch_stop
 from .plot import decimate, save_waterfall
 from .spur import SpurMask
 from .store import Store, replace
@@ -353,6 +353,7 @@ class Survey:
         self.stop_requested()
         self.hline.cal_requested()           # a request left from before this start is void
         watch_stop(self.cfg["state_dir"], self.stop)
+        watch_app(self.stop)
         save = self.cfg.get("save") or {}
         seti_ok = nch >= int(self.adv.get("seti_min_chan") or MIN_SETI_CHANNELS)
         if not seti_ok:

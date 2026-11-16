@@ -147,11 +147,14 @@ def test_fs_scan_end_to_end(tmp_path, monkeypatch):
     hl = hline.HLine(cfg, source=src, log=logs.append)
     assert hl.scan()
     f_sig, f_ref = hline.fs_tunings(hl.h, src.rate)
-    assert tuned == [f_sig, f_ref] * 2
+    assert tuned == [f_sig, f_ref]                       # 30 s on the line, 10 s off it
     assert src.center_hz == home
     d = tmp_path / "s" / "hline"
     sig = np.fromfile(next(d.glob("obs_*[0-9].dat")), np.float32).reshape(-1, chans)
-    assert sig.shape[0] == 18 and sig.max() < 3.0
+    ref = np.fromfile(next(d.glob("obs_*_ref.dat")), np.float32).reshape(-1, chans)
+    assert sig.shape[0] == 29 and ref.shape[0] == 9 and sig.max() < 3.0
+    hdr = dict(x.strip().split("=", 1) for x in open(next(d.glob("obs_*[0-9].header"))))
+    assert float(hdr["duration"]) == 29
     assert any("frequency switched peak" in m for m in logs), logs
     row = open(d / "scans.csv").read().splitlines()[-1].split(",")
     assert float(row[6]) == pytest.approx(10 * np.log10(1.05), abs=0.01)
@@ -487,3 +490,44 @@ def test_scan_after_a_row_cut_short_is_still_listed(tmp_path, monkeypatch):
     rows = open(node.csv, "rb").read().splitlines()
     assert len(rows) == 4 and rows[2] == b"2026-11-12 05:30:00,obs_2026"
     assert len(rows[3].split(b",")) == 8 and rows[3].split(b",")[1].startswith(b"obs_")
+
+
+@pytest.mark.parametrize("dur,phase,share,want", [
+    (300, 30, 3, (37, 3, 2)),        # the defaults: 222 s on the line, 74 s off it
+    (300, 30, 1, (30, 1, 5)),        # half and half, as before 0.2.23
+    (600, 150, 3, (150, 3, 1)),      # the search's own blocks
+    (40, 20, 3, (10, 3, 1)),         # a short scan is not stretched past its length
+    (10, 30, 3, (5, 3, 1)),
+])
+def test_fs_plan_fills_the_scan_three_to_one(dur, phase, share, want):
+    h = dict(hline.DEFAULTS, duration_s=dur, fs_phase_s=phase, fs_signal_phases=share)
+    got = hline.fs_plan(h)
+    assert got == want
+    assert got[0] * (got[1] + 1) * got[2] <= max(dur, 20)
+
+
+def test_fs_half_and_half_still_available(tmp_path, monkeypatch):
+    """fs_signal_phases 1 is the scheme of the versions before: equal time on both."""
+    from aquila import config as cfgmod
+    from aquila.sdr import Synthetic
+    cfg = cfgmod.load(str(tmp_path / "c.json"))
+    cfg.update(sdr="synthetic", sample_rate=2_400_000, state_dir=str(tmp_path / "s"))
+    cfg["hline"] = {"duration_s": 40, "fs_phase_s": 10, "fs_signal_phases": 1}
+    cfg["save"]["plots"] = False
+    src = Synthetic(cfg)
+    src.rate = 2_400_000
+    tuned = []
+    chans = 1024
+    off = (np.arange(chans) - chans / 2.0) * src.rate / chans
+
+    def fake_observe(s, dat, obs, log=print, fine=0, **_):
+        tuned.append((s.center_hz, obs["duration"]))
+        n = int(obs["duration"] / obs["t_sample"])
+        _sky(s.center_hz + off, 0.05, 0.0, 0.0).astype(np.float32).repeat(n).reshape(
+            chans, n).T.copy().tofile(dat)
+        return True
+    monkeypatch.setattr(hline, "observe", fake_observe)
+    hl = hline.HLine(cfg, source=src, log=lambda m: None)
+    assert hl.scan()
+    f_sig, f_ref = hline.fs_tunings(hl.h, src.rate)
+    assert tuned == [(f_sig, 10), (f_ref, 10)] * 2

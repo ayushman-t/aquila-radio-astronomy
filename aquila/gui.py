@@ -19,7 +19,17 @@ import urllib.error
 import urllib.request
 
 import numpy as np
-from PySide6.QtCore import QEvent, QProcess, QRectF, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QProcess,
+    QProcessEnvironment,
+    QRectF,
+    QSize,
+    Qt,
+    QThread,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -1216,6 +1226,68 @@ def _auto_pick(names):
     return next((n for n in sdr.detect() if n in names), None)
 
 
+def _look_for_receivers(rates=True):
+    """(receivers plugged in, the sample rates an Airspy or HydraSDR among them lists,
+    the RTL-SDRs one by one)."""
+    names = sdr.attached()
+    own = sdr.airspy_rates() if rates and {"airspy", "hydrasdr"} & set(names) else []
+    units = sdr.rtl_devices() if "rtlsdr" in names else []
+    return names, own, units
+
+
+PICK_SEP = "|"          # combo data of one receiver out of two alike: "rtlsdr|<-d value>"
+
+
+def _pick(combo):
+    """(receiver name, which one of several alike or "") of the chosen list entry."""
+    name, _, device = str(combo.currentData() or "auto").partition(PICK_SEP)
+    return name, device
+
+
+def _add_pinned(combo, cfg):
+    """Receiver list as saved: an RTL-SDR picked out of several gets its own entry, so
+    it shows, and stays, before the receivers have been looked for."""
+    device = str((cfg.get("advanced") or {}).get("device") or "").strip()
+    at = combo.findData("rtlsdr")
+    if not device or at < 0 or not combo.model().item(at).isEnabled():
+        return
+    combo.insertItem(at + 1, f"RTL-SDR ({device})", "rtlsdr" + PICK_SEP + device)
+    if cfg.get("sdr") == "rtlsdr":
+        combo.setCurrentIndex(at + 1)
+
+
+def _add_units(combo, units):
+    """With two or more RTL-SDRs plugged in, one entry for each under "RTL-SDR". Returns
+    True when two of them cannot be told apart by serial."""
+    at = combo.findData("rtlsdr")
+    if len(units) < 2 or at < 0:
+        return False
+    choices = sdr.rtl_choices(units)
+    serials = [s for _, s in units]
+    saved = next((i for i in range(combo.count())
+                  if str(combo.itemData(i)).startswith("rtlsdr" + PICK_SEP)), -1)
+    saved_dev = str(combo.itemData(saved)).partition(PICK_SEP)[2] if saved >= 0 else ""
+    combo.blockSignals(True)
+    pos = at + 1
+    for (index, serial), (label, device) in zip(units, choices, strict=True):
+        same = saved >= 0 and saved_dev in (
+            device, str(index), serial if serials.count(serial) == 1 else None)
+        if same:
+            combo.setItemText(saved, label)       # the saved one: keep what was saved
+            pos = saved + 1
+            saved = -1
+        else:
+            combo.insertItem(pos, label, "rtlsdr" + PICK_SEP + device)
+            if saved >= 0 and pos <= saved:
+                saved += 1
+            pos += 1
+    combo.blockSignals(False)
+    return len(set(serials)) < len(serials)
+
+
+SAME_SERIAL_TEXT = "The RTL-SDRs have the same serial: their numbers can swap when replugged."
+
+
 def _rate_fits(cls, rate):
     """True for a saved sample rate this receiver can be asked for: none (its default),
     one it lists, or one set by hand inside its range."""
@@ -1258,7 +1330,8 @@ class Settings(QDialog):
                 self.sdr.model().item(self.sdr.count() - 1).setEnabled(False)
         i = self.sdr.findData(cfg["sdr"])
         self.sdr.setCurrentIndex(i if i >= 0 else 0)
-        self._sdr_opened = self.sdr.currentIndex()
+        _add_pinned(self.sdr, cfg)
+        self._sdr_opened = self.sdr.currentData()
         row = QHBoxLayout()
         row.addWidget(self.sdr, 1)
         self.check = QPushButton("Check")
@@ -1271,17 +1344,17 @@ class Settings(QDialog):
             self.sdr_result.setText(f"In use now by this computer's node: {cur}.")
         else:
             self.sdr_result.setText("Not observing. Looking for a connected receiver...")
-            self._scan = Call(sdr.attached)
+            self._scan = Call(_look_for_receivers)
             self._scan.done.connect(self._scanned)
             self._scan.start()
         self.sdr_result.setStyleSheet("color: gray")
         form.addRow(self.sdr_result)
         self.freq = self._spin(0, 30000, cfg["center_mhz"], 4, " MHz")
         form.addRow("Centre frequency:", self.freq)
-        fnote = QLabel("Hydrogen line is 1420.4058 MHz. Keep it off the centre; the default "
-                       "1420.0000 puts it 400 kHz up, clear of the DC spike.")
-        fnote.setWordWrap(True)
-        form.addRow(fnote)
+        self.fnote = QLabel("")
+        self.fnote.setWordWrap(True)
+        self.fnote.setStyleSheet("color: gray")
+        form.addRow(self.fnote)
         self.rate = QComboBox()
         form.addRow("Bandwidth (sample rate):", self.rate)
         self.bias = QCheckBox("Bias tee: power the LNA through the coax")
@@ -1385,6 +1458,7 @@ class Settings(QDialog):
         self.narrow.setChecked((cfg.get("app") or {}).get("narrowband", True))
         self.narrow.setToolTip("Off: the app observes the hydrogen line only and the search "
                                "tabs are hidden. Change it any time.")
+        self.narrow.toggled.connect(self._mode_changed)
         form.addRow("Observe:", self.narrow)
         form.addRow("Startup:", self.auto_login)
         form.addRow("", self.auto_obs)
@@ -1434,12 +1508,13 @@ class Settings(QDialog):
         self.s_plots.setChecked(sv.get("plots", True))
         self.s_spectra = QCheckBox("Spectra (virgo scan files and hit snippets)")
         self.s_spectra.setChecked(sv.get("spectra", True))
-        self.s_raw = QCheckBox("Raw IQ samples for every block")
+        self.s_raw = QCheckBox("Raw IQ samples for every search block")
         self.s_raw.setChecked(sv.get("raw_iq", False))
         form.addRow("Save:", self.s_csv)
         form.addRow("", self.s_plots)
         form.addRow("", self.s_spectra)
         form.addRow("", self.s_raw)
+        self._mode_changed()
         warn = QLabel("Raw IQ is 1.5 GB per block at 2.5 Msps and 6 GB at 10 Msps, so 35 to "
                       "140 GB an hour. Unless the data folder is on a drive with terabytes "
                       "free, it will fill in hours. Raw files are never deleted by the app; "
@@ -1458,21 +1533,40 @@ class Settings(QDialog):
         bb.rejected.connect(self.reject)
         outer.addWidget(bb)
 
+    def _mode_changed(self, *_):
+        """What only the search uses is greyed out without it: a hydrogen line scan tunes
+        itself to the line and keeps no raw samples."""
+        on = self.narrow.isChecked()
+        self.freq.setEnabled(on)
+        self.fft.setEnabled(on)
+        self.s_raw.setEnabled(on)
+        self._fft_info()
+        self.fnote.setText(
+            "Only for a search away from the hydrogen line. With the line in the band "
+            "the receiver tunes itself to it." if on else
+            "Not used: a hydrogen line scan tunes itself to the line.")
+
     def _scanned(self, names):
         """The USB scan is back: say what is connected, and show that receiver's gain
         stages and rates under Auto, since that is the one the node will use."""
+        units = []
+        if isinstance(names, tuple):
+            names, self.dev_rates, units = names     # the rates an Airspy lists for itself
         names = [] if isinstance(names, Exception) else [n for n in names if n in sdr.SOURCES]
+        self.plugged = names
         self.sdr_result.setText(
             "Not observing. Connected: " + ", ".join(sdr.SOURCES[n].label for n in names)
             if names else "Not observing. No receiver connected.")
+        if _add_units(self.sdr, units):
+            self.sdr_result.setText(self.sdr_result.text() + ". " + SAME_SERIAL_TEXT)
         first = _auto_pick(names)
         if first and self.auto_sdr is None:
             self.auto_sdr = first
             self._fill_gains()
-            self._fill_rates()
+        self._fill_rates()
 
     def check_sdr(self):
-        if _in_use(self.current_sdr, self.sdr.currentData()):
+        if _in_use(self.current_sdr, _pick(self.sdr)[0]):
             self.sdr_result.setText(IN_USE_TEXT)
             self.sdr_result.setStyleSheet("")
             return
@@ -1499,7 +1593,7 @@ class Settings(QDialog):
     def _sdr_class(self):
         """The receiver the page is showing. Auto is the one in use or plugged in; with
         neither known, the first one this computer has the software for."""
-        name = self.sdr.currentData()
+        name = _pick(self.sdr)[0]
         if name not in sdr.SOURCES:
             name = self.auto_sdr or (sdr.detect() or ["airspy"])[0]
         return sdr.SOURCES[name]
@@ -1546,14 +1640,23 @@ class Settings(QDialog):
             return self.cfg["advanced"].get("gain", "preset")
         return "preset" if vals == cls.preset else dict(vals, **{"for": cls.name})
 
+    def _device_rates(self, cls):
+        """The rates the plugged in receiver lists for itself, when it is the kind shown
+        and could be asked: an Airspy Mini and an R2 do not take the same ones."""
+        if cls.name in ("airspy", "hydrasdr") and cls.name in getattr(self, "plugged", ()):
+            return list(getattr(self, "dev_rates", None) or ())
+        return []
+
     def _fill_rates(self):
         cls = self._sdr_class()
         cur = int(self.cfg.get("sample_rate") or 0)
         self.rate.blockSignals(True)
         self.rate.clear()
-        self.rate.addItem(f"Device default ({cls.default_rate / 1e6:g} Msps)", 0)
-        rates = list(cls.rates)
-        if (cur and cur not in rates and self.sdr.currentIndex() == self._sdr_opened
+        own = self._device_rates(cls)
+        default = sdr.nearest_rate(cls.default_rate, own)
+        self.rate.addItem(f"Device default ({default / 1e6:g} Msps)", 0)
+        rates = own or list(cls.rates)
+        if (cur and cur not in rates and self.sdr.currentData() == self._sdr_opened
                 and _rate_fits(cls, cur)):
             rates = sorted(rates + [cur])        # set by hand in the config file: keep it
         for r in rates:
@@ -1567,11 +1670,15 @@ class Settings(QDialog):
     def _fft_info(self):
         n = int(self.fft.currentData())
         cls = self._sdr_class()
-        rate = float(self.rate.currentData() or cls.default_rate)
+        rate = float(self.rate.currentData()
+                     or sdr.nearest_rate(cls.default_rate, self._device_rates(cls)))
         adv = self.cfg["advanced"]
         chan = rate / n
         block = float(adv["dwell_s"]) - float(adv["settle_skip_s"])
-        if n < int(adv.get("seti_min_chan") or MIN_SETI_CHANNELS):
+        narrow = getattr(self, "narrow", None)
+        if narrow is not None and not narrow.isChecked():
+            self.fft_info.setText("Not used without the narrowband search.")
+        elif n < int(adv.get("seti_min_chan") or MIN_SETI_CHANNELS):
             self.fft_info.setText(f"{chan:.0f} Hz channels. Too coarse for the narrowband search, "
                                   "so only the hydrogen line runs.")
         else:
@@ -1591,7 +1698,9 @@ class Settings(QDialog):
         c = json.loads(json.dumps({k: v for k, v in self.cfg.items() if not k.startswith("_")}))
         c["_path"] = self.cfg.get("_path")
         c["_state_dir_set"] = self.cfg.get("_state_dir_set")
-        c["sdr"] = self.sdr.currentData()
+        c["sdr"], device = _pick(self.sdr)
+        if c["sdr"] == "rtlsdr":
+            c["advanced"]["device"] = device     # plain "RTL-SDR": the first one found
         if getattr(self, "_folder_set", False):
             c["state_dir"] = self.folder.text()
             c["_state_dir_set"] = True
@@ -1649,6 +1758,7 @@ class QuickSetup(QDialog):
                 self.sdr.model().item(self.sdr.count() - 1).setEnabled(False)
         want = cfg.get("sdr") if cfg.get("sdr") in found + ["synthetic"] else "auto"
         self.sdr.setCurrentIndex(max(self.sdr.findData(want), 0))
+        _add_pinned(self.sdr, dict(cfg, sdr=want))
         row = QHBoxLayout()
         row.addWidget(self.sdr, 1)
         self.check = QPushButton("Check")
@@ -1659,7 +1769,7 @@ class QuickSetup(QDialog):
         self.sdr_result.setWordWrap(True)
         self.sdr_result.setStyleSheet("color: gray")
         form.addRow(self.sdr_result)
-        self._scan = Call(sdr.attached)
+        self._scan = Call(lambda: _look_for_receivers(rates=False))
         self._scan.done.connect(lambda names, found=found: self._scanned(names, found))
         self._scan.start()
         self.mode = QComboBox()
@@ -1671,7 +1781,13 @@ class QuickSetup(QDialog):
                              "in Settings.")
         form.addRow("Observe:", self.mode)
         self.freq = Settings._spin(0, 30000, cfg["center_mhz"], 4, " MHz")
+        self.freq.setToolTip("Only for a search away from the hydrogen line. With the line "
+                             "in the band the receiver tunes itself to it.")
         form.addRow("Centre frequency:", self.freq)
+        # a hydrogen line scan tunes itself: the field is the search's alone
+        self.mode.currentIndexChanged.connect(
+            lambda *_: self.freq.setEnabled(bool(self.mode.currentData())))
+        self.freq.setEnabled(bool(self.mode.currentData()))
         d = cfg["dish"]
         self.az = Settings._spin(0, 360, d["az"], 1, " deg")
         self.el = Settings._spin(0, 90, d["el"], 1, " deg")
@@ -1719,21 +1835,26 @@ class QuickSetup(QDialog):
 
     def _show_rest(self, *_):
         """The fixed settings line. The bias tee is the chosen receiver's while unset."""
-        cls = sdr.SOURCES.get(self.sdr.currentData()) or sdr.SOURCES.get(self.auto_sdr)
+        cls = sdr.SOURCES.get(_pick(self.sdr)[0]) or sdr.SOURCES.get(self.auto_sdr)
         on = (cls or sdr.Source).bias_on(self.cfg["advanced"])
         self.rest.setText(self._rest_text.format("on" if on else "off"))
 
     def _scanned(self, names, found):
+        units = []
+        if isinstance(names, tuple):
+            names, _, units = names
         if isinstance(names, Exception):
             names = []
         names = [n for n in names if n in sdr.SOURCES]
+        same_serial = _add_units(self.sdr, units)
         self.auto_sdr = self.auto_sdr or _auto_pick(names)
         self._show_rest()
         labels = [sdr.SOURCES[n].label for n in names]
         self.sdr.setItemText(0, "Auto detect  (now: "
                              + (labels[0] if labels else "none detected") + ")")
         if labels:
-            self.sdr_result.setText("Connected: " + ", ".join(labels))
+            self.sdr_result.setText("Connected: " + ", ".join(labels)
+                                    + (". " + SAME_SERIAL_TEXT if same_serial else ""))
         elif found:
             self.sdr_result.setText("No receiver connected. Software installed for: "
                                     + ", ".join(sdr.SOURCES[n].label for n in found))
@@ -1742,7 +1863,7 @@ class QuickSetup(QDialog):
                                     "The synthetic source runs without hardware.")
 
     def check_sdr(self):
-        if _in_use(self.current_sdr, self.sdr.currentData()):
+        if _in_use(self.current_sdr, _pick(self.sdr)[0]):
             self.sdr_result.setText(IN_USE_TEXT)
             self.sdr_result.setStyleSheet("")
             return
@@ -1765,7 +1886,9 @@ class QuickSetup(QDialog):
         c["_state_dir_set"] = self.cfg.get("_state_dir_set")
         if self.name.text().strip() != c.get("name"):
             config.rename(c, self.name.text())       # it names the data folder
-        c["sdr"] = self.sdr.currentData()
+        c["sdr"], device = _pick(self.sdr)
+        if c["sdr"] == "rtlsdr":
+            c["advanced"]["device"] = device     # plain "RTL-SDR": the first one found
         cls = sdr.SOURCES.get(c["sdr"]) or sdr.SOURCES.get(self.auto_sdr)
         if cls and c["sdr"] != self.cfg.get("sdr") and not _rate_fits(cls, c.get("sample_rate")):
             c["sample_rate"] = 0                     # the last receiver's rate: this one lacks it
@@ -2667,6 +2790,9 @@ class Main(QMainWindow):
             args += ["-c", self.cfg_path]
         with contextlib.suppress(OSError):
             os.remove(os.path.join(self.cfg["state_dir"], "stop"))
+        env = QProcessEnvironment.systemEnvironment()
+        env.insert(lock.APP_PID_ENV, str(os.getpid()))     # the observer ends if this app dies
+        self.proc.setProcessEnvironment(env)
         self.proc.start(sys.executable, args + [verb])
         self.refresh()
 

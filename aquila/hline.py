@@ -14,7 +14,7 @@ import time
 import numpy as np
 
 from . import config, lineview, map3d, sdr
-from .lock import acquire_lock, release_lock, watch_stop
+from .lock import acquire_lock, release_lock, watch_app, watch_stop
 from .store import Store, end_row, replace
 
 DEFAULTS = {
@@ -42,6 +42,9 @@ DEFAULTS = {
     # 8 times flatter, same line shape. Since 0.2.16 this is the only mode: a stored
     # receiver reference (aquila cal) is used only where the band holds no line.
     "fs_phase_s": 30,
+    # signal time for each reference phase in a hydrogen line only scan: 3 is the
+    # search's own scheme (three blocks on the line, one off it), 1 is half and half
+    "fs_signal_phases": 3,
     "fs_throw_hz": 0,
     # search and calibrated line from one receiver: this many search blocks at the signal
     # tuning, then one reference block, not searched. 0: the line in search mode is
@@ -283,6 +286,17 @@ def fs_tunings(h, rate):
     """(signal, reference) centre frequencies in Hz."""
     f_sig = h["f_rest_hz"] - FS_LINE_IF * rate
     return int(round(f_sig)), int(round(f_sig + fs_throw(rate, h.get("fs_throw_hz", 0))))
+
+
+def fs_plan(h):
+    """(phase seconds, signal phases per reference phase, turns) of one hydrogen line
+    only scan. The phase is stretched so the turns fill duration_s: 300 s at the
+    defaults is two turns of 111 s on the line and 37 s off it."""
+    phase = max(5, int(h.get("fs_phase_s", 30)))
+    share = max(1, int(h.get("fs_signal_phases", 3)))
+    turns = max(1, int(round(float(h["duration_s"]) / ((share + 1.0) * phase))))
+    phase = max(5, int(float(h["duration_s"]) // ((share + 1) * turns)))
+    return phase, share, turns
 
 
 def fs_search_blocks(cfg, rate):
@@ -566,7 +580,7 @@ class HLine:
 
     def status(self, state, **extra):
         d = {"state": state, "mode": "hline", "name": self.cfg["name"], "sdr": self.src.name,
-             "center_hz": self.src.center_hz, "sample_rate": self.src.rate,
+             "center_hz": fs_tunings(self.h, self.src.rate)[0], "sample_rate": self.src.rate,
              "n_chan": int(self.h["channels"]), "dwell_s": int(self.h["duration_s"]),
              "dish": {k: v for k, v in self.cfg["dish"].items() if k != "rotator"},
              "site": self.cfg.get("site"),
@@ -586,15 +600,16 @@ class HLine:
 
     def fs_scan(self):
         """One frequency switched scan: signal (the line in the band) and reference
-        (retuned by the throw, no line) in alternating phases of fs_phase_s, so slow
-        gain drift hits both equally. Written as obs_<stamp>.dat (signal) and
-        obs_<stamp>_ref.dat, each a normal virgo scan of its own tuning."""
+        (retuned by the throw, no line) in turn, so slow gain drift hits both alike.
+        Each turn is fs_signal_phases phases on the line and one off it, three to one
+        as the search does it with its blocks; the turns fill duration_s. Written as
+        obs_<stamp>.dat (signal) and obs_<stamp>_ref.dat, each a normal virgo scan of
+        its own tuning."""
         src, h = self.src, self.h
         home = src.center_hz
         f_sig, f_ref = fs_tunings(h, src.rate)
         throw = f_ref - f_sig
-        phase = max(5, int(h.get("fs_phase_s", 30)))
-        pairs = max(1, int(round(h["duration_s"] / (2.0 * phase))))
+        phase, share, pairs = fs_plan(h)
         stamp = time.strftime("%Y%m%d_%H%M%S")
         dat = os.path.join(self.dir, f"obs_{stamp}.dat")
         ref = dat.replace(".dat", "_ref.dat")
@@ -604,11 +619,11 @@ class HLine:
         mjd0 = time.time() / 86400.0 + 40587.0
         try:
             for _ in range(pairs):
-                for fc in (f_sig, f_ref):
+                for fc, secs in ((f_sig, share * phase), (f_ref, phase)):
                     if not self.running:
                         return False
                     src.center_hz = fc
-                    obs = obs_parameters(self.cfg, src, h, duration=phase)
+                    obs = obs_parameters(self.cfg, src, h, duration=secs)
                     if not observe(src, tmp, obs, self.log,
                                    blank=self.h.get("blank_pulses", False), kept=self._kept):
                         return False
@@ -622,20 +637,21 @@ class HLine:
                 with contextlib.suppress(OSError):
                     os.remove(p)
         tsamp = float(h["t_sample"])
-        kept = min(sum(len(a) for a in acc[fc]) for fc in acc)
         for fc, path in ((f_sig, dat), (f_ref, ref)):
             src.center_hz = fc
-            obs = obs_parameters(self.cfg, src, h, duration=round(kept * tsamp))
+            rows = np.concatenate(acc[fc])
+            obs = obs_parameters(self.cfg, src, h, duration=round(len(rows) * tsamp))
             obs["fs_throw_hz"] = f"{throw:.0f}"
             obs["fs_ref"] = os.path.basename(ref)
-            np.concatenate(acc[fc])[:kept].astype(np.float32).tofile(path + ".tmp")
+            rows.astype(np.float32).tofile(path + ".tmp")
             replace(path + ".tmp", path)
             with open(path.replace(".dat", ".header"), "w") as fh:
                 fh.write(f"mjd={mjd0:.8f}\n")
                 for k2, v2 in obs.items():
                     fh.write(f"{k2}={v2}\n")
         src.center_hz = f_sig
-        obs = obs_parameters(self.cfg, src, h, duration=round(kept * tsamp))
+        obs = obs_parameters(self.cfg, src, h,
+                             duration=round(sum(len(a) for a in acc[f_sig]) * tsamp))
         src.center_hz = home
         obs["fs_throw_hz"] = throw
         return self.record(dat, obs, stamp, ref=ref)
@@ -905,9 +921,12 @@ class HLine:
         self.stop_requested()
         self.cal_requested()                 # a request left from before this start is void
         watch_stop(self.cfg["state_dir"], self.stop)
+        watch_app(self.stop)
         self._map_backfill()
         cal = "yes" if os.path.exists(self.cal) else "no"
-        self.log(f"=== h-line: {self.src.name} at {self.src.center_hz / 1e6:.4f} MHz, "
+        # the tuning is the line's own, whatever centre frequency is in the config
+        self.log(f"=== h-line: {self.src.name} at "
+                 f"{fs_tunings(self.h, self.src.rate)[0] / 1e6:.4f} MHz, "
                  f"{self.h['duration_s']} s scans, cal {cal}")
         while self.running and (not blocks or n < blocks) and not (blocks and fails >= 5):
             if self.cal_requested():
@@ -943,6 +962,7 @@ class HLine:
                 time.sleep(5)
         self.status("stopped", scans=self.n_scans)
         release_lock(self.lock)
+        return n
 
 
 def _copy(src, dst):

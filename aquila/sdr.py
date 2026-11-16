@@ -617,16 +617,91 @@ def _usb_devices_lsusb():
     return out
 
 
-def _airspy_firmware():
-    """The firmware line from airspy_info ("HydraSDR RFOne v1.0.0" or "AirSpy ...")."""
+def _airspy_info():
+    """What airspy_info prints, or nothing: the tool is missing, or the receiver is in
+    use and cannot be opened."""
+    tool = which("airspy_info")
+    if not tool:
+        return ""
     try:
-        r = subprocess.run(["airspy_info"], capture_output=True, text=True, timeout=15)
+        r = subprocess.run([tool], capture_output=True, text=True, timeout=15,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except (OSError, subprocess.SubprocessError):
         return ""
-    for line in r.stdout.splitlines():
+    return r.stdout or ""
+
+
+def _airspy_firmware():
+    """The firmware line from airspy_info ("HydraSDR RFOne v1.0.0" or "AirSpy ...")."""
+    for line in _airspy_info().splitlines():
         if "Firmware" in line:
             return line.split(":", 1)[-1].strip()
     return ""
+
+
+def airspy_rates():
+    """The sample rates the plugged in Airspy or HydraSDR lists for itself, in Hz, lowest
+    first. Empty when it cannot be asked. A Mini lists 3 and 6 Msps, an R2 2.5 and 10."""
+    import re
+    out = set()
+    for m in re.finditer(r"^\s*([0-9]+(?:\.[0-9]+)?)\s*MSPS\s*$", _airspy_info(), re.M | re.I):
+        out.add(int(round(float(m.group(1)) * 1e6)))
+    return sorted(out)
+
+
+def nearest_rate(want, rates):
+    """want when the receiver lists it (or lists nothing), else its closest rate."""
+    if not rates or want in rates:
+        return want
+    return min(rates, key=lambda r: (abs(r - want), r))
+
+
+def rtl_devices():
+    """(index, serial) of every RTL-SDR the rtl_sdr tool sees, in the tool's own order.
+    It is asked for a receiver that does not exist, so it lists them and opens none."""
+    import re
+    tool = which("rtl_sdr")
+    if not tool:
+        return []
+    try:
+        r = subprocess.run([tool, "-d", "aquila-list-only", "-"], capture_output=True,
+                           text=True, errors="replace", timeout=15,
+                           stdin=subprocess.DEVNULL,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.SubprocessError):
+        return []
+    text = (r.stderr or "") + "\n" + (r.stdout if isinstance(r.stdout, str) else "")
+    return [(int(m.group(1)), m.group(2).strip())
+            for m in re.finditer(r"^\s*(\d+):\s.*\bSN:[ \t]*(.*)$", text, re.M)]
+
+
+def _reads_as_index(serial, count):
+    """True when rtl_sdr would take this serial for a device number: it tries a number
+    first (decimal, octal with a leading 0, or 0x hex) and only then the serials."""
+    s = serial.strip().lower()
+    try:
+        if s.startswith(("0x", "+0x", "-0x")):
+            v = int(s, 16)
+        elif s.lstrip("+-").startswith("0") and len(s.lstrip("+-")) > 1:
+            v = int(s, 8)
+        else:
+            v = int(s, 10)
+    except ValueError:
+        return False
+    return 0 <= v < count
+
+
+def rtl_choices(units):
+    """(label, what to pass as -d) for each RTL-SDR, for a list to pick from. The serial
+    is passed when it names one receiver only, since it survives a replug; otherwise
+    the number."""
+    serials = [s for _, s in units]
+    out = []
+    for i, s in units:
+        by_serial = bool(s) and serials.count(s) == 1 and not _reads_as_index(s, len(units))
+        out.append((f"RTL-SDR #{i + 1}" + (f" (serial {s})" if s else ""),
+                    s if by_serial else str(i)))
+    return out
 
 
 def match_usb(devices):
@@ -713,6 +788,20 @@ def make(cfg):
                     break
     if name not in SOURCES:
         raise RuntimeError(f"unknown sdr '{name}'")
+    if name == "airspy":
+        # the same tool drives both, but not at the same rates: a HydraSDR refuses the
+        # Airspy default, and an R2 does not list the Mini's
+        plugged = attached()
+        if "hydrasdr" in plugged and "airspy" not in plugged:
+            name = "hydrasdr"
+            gain = cfg["advanced"].get("gain")
+            if isinstance(gain, dict) and gain.get("for") == "airspy":
+                # the gains set on the Airspy page are meant for this receiver: same stages
+                cfg = dict(cfg, advanced=dict(cfg["advanced"], gain=dict(gain, **{"for": name})))
+        elif "airspy" in plugged and not cfg.get("sample_rate"):
+            rate = nearest_rate(Airspy.default_rate, airspy_rates())
+            if rate != Airspy.default_rate:
+                cfg = dict(cfg, sample_rate=rate)
     cls = SOURCES[name]
     if not cls.available():
         raise RuntimeError(f"{name} needs '{cls.tool}' on PATH")
