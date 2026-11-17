@@ -418,3 +418,14 @@ def test_a_hydrogen_line_scan_runs_on_one(lib, tmp_path):
     assert not cli.main(["-c", str(p), "hline", "--blocks", "1"])
     rows = (tmp_path / "s" / "hline" / "scans.csv").read_text().splitlines()
     assert len(rows) == 2
+
+
+def test_packaged_app_knows_every_verb():
+    """The packaged app adds "gui" to a command line with no verb it knows: a verb
+    missing from its list never reaches the command line parser."""
+    import re
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    entry = open(os.path.join(root, "packaging", "pyinstaller", "entry.py")).read()
+    known = set(re.findall(r'"([a-z0-9-]+)"', entry.split("VERBS = {")[1].split("}")[0]))
+    cli_src = open(os.path.join(root, "aquila", "cli.py")).read()
+    assert set(re.findall(r'add_parser\("([a-z0-9-]+)"', cli_src)) == known
