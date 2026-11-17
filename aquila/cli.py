@@ -168,6 +168,11 @@ def cmd_status(args):
             print(f"{k:<14} {d[k]}")
 
 
+def cmd_vendor_rx(args):
+    from . import vendor_rx
+    sys.exit(vendor_rx.main(args.rest))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="aquila", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -196,6 +201,9 @@ def main(argv=None):
     a.set_defaults(fn=cmd_curate)
     sub.add_parser("map3d").set_defaults(fn=cmd_map3d)
     sub.add_parser("status").set_defaults(fn=cmd_status)
+    a = sub.add_parser("vendor-rx")     # the frozen app reading a receiver: sdr.vendor_cmd
+    a.add_argument("rest", nargs=argparse.REMAINDER)
+    a.set_defaults(fn=cmd_vendor_rx)
     args = ap.parse_args(argv)
     try:
         args.fn(args)

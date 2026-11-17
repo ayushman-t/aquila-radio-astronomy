@@ -6,9 +6,15 @@ import numpy as np
 from scipy.ndimage import uniform_filter1d
 
 
-def channelize(src, n_chan, rows, dwell_s, settle_skip_s, log=print, raw_sink=None):
+def channelize(src, n_chan, rows, dwell_s, settle_skip_s, log=print, raw_sink=None,
+               gated=None):
     """Stream one dwell of IQ through the FFT into a fixed (rows x n_chan) waterfall.
-    Returns (waterfall fftshifted, chan_bw_hz, row_s) or (None, None, None)."""
+    Returns (waterfall fftshifted, chan_bw_hz, row_s) or (None, None, None).
+
+    gated, a dict with "chans" and "pick", asks for a second product from the same
+    samples: each long frame cut into short ones of chans samples, only those pick keeps
+    averaged. It is left in gated["rows"] (rows x chans), the share kept in gated["kept"].
+    The waterfall itself is not touched."""
     rate = src.rate
     total_ffts = int((dwell_s * rate) // n_chan)
     skip_ffts = int((settle_skip_s * rate) // n_chan)
@@ -19,6 +25,13 @@ def channelize(src, n_chan, rows, dwell_s, settle_skip_s, log=print, raw_sink=No
     src.start(nsamples, n_chan)
     win = np.hanning(n_chan).astype(np.float32)
     wf = np.zeros((rows, n_chan), dtype=np.float32)
+    short = int(gated["chans"]) if gated else 0
+    if short and n_chan % short:
+        short = 0
+    if short:
+        swin = np.hanning(short).astype(np.float32)
+        srows = np.zeros((rows, short), dtype=np.float64)
+        kept = []
     gen = src.frames(n_chan)
 
     def next_frame():
@@ -44,6 +57,15 @@ def channelize(src, n_chan, rows, dwell_s, settle_skip_s, log=print, raw_sink=No
                 measured = True
             X = np.fft.fft(z * win)
             wf[r] += X.real * X.real + X.imag * X.imag
+            if short:
+                fs = z.reshape(-1, short)
+                keep = gated["pick"](fs)
+                kept.append(float(keep.mean()))
+                Y = np.fft.fft(fs[keep] * swin, axis=1)
+                srows[r] += (Y.real * Y.real + Y.imag * Y.imag).mean(axis=0)
+    if short:
+        gated["rows"] = np.fft.fftshift(srows / fpr, axes=1).astype(np.float32)
+        gated["kept"] = kept
     err = src.finish()
     if "overrun" in err.lower():
         log("WARNING: SDR overrun during capture: " + err.strip()[-80:])

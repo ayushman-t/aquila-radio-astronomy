@@ -656,7 +656,27 @@ class HLine:
         obs["fs_throw_hz"] = throw
         return self.record(dat, obs, stamp, ref=ref)
 
-    def record_block(self, wf_raw, row_s):
+    def gated(self):
+        """What the search's channelizer is asked for when pulses are blanked and the scan
+        is frequency switched: the hydrogen rows made from the quiet frames only, as a
+        hydrogen line only scan makes them. None otherwise."""
+        if self.fs_search and self.h.get("blank_pulses"):
+            return {"chans": int(self.h["channels"]), "pick": quiet_frames}
+        return None
+
+    def _rows(self, wf_raw, gated):
+        """The hydrogen rows of one block: the blanked ones when asked for and made,
+        else the raw waterfall binned."""
+        rows, nch = wf_raw.shape
+        chans = int(self.h["channels"])
+        if gated and gated.get("rows") is not None and gated["rows"].shape == (rows, chans):
+            if getattr(self, "_kept", None) is None:
+                self._kept = []
+            self._kept.extend(gated.get("kept") or [])
+            return gated["rows"]
+        return wf_raw.reshape(rows, chans, nch // chans).mean(axis=2).astype(np.float32)
+
+    def record_block(self, wf_raw, row_s, gated=None):
         """H-line product from a SETI block: the raw waterfall binned to 1024 channels,
         written as a virgo scan. This is how one observation feeds both searches."""
         rows, nch = wf_raw.shape
@@ -667,7 +687,7 @@ class HLine:
         obs = obs_parameters(self.cfg, self.src, self.h, chans, row_s, rows * row_s)
         if self.h.get("day_file", True):
             self.day_file(wf_raw, obs, rows * row_s)
-        binned = wf_raw.reshape(rows, chans, nch // chans).mean(axis=2).astype(np.float32)
+        binned = self._rows(wf_raw, gated)
         if self.fs_search:
             if not self.fs_rows:
                 self.fs_mjd = time.time() / 86400.0 + 40587.0 - rows * row_s / 86400.0
@@ -683,7 +703,7 @@ class HLine:
                 f.write(f"{k2}={v2}\n")
         return self.record(dat, obs, stamp, block=True)
 
-    def record_reference(self, wf_raw, row_s, f_sig, f_ref):
+    def record_reference(self, wf_raw, row_s, f_sig, f_ref, gated=None):
         """The reference block ends a frequency switched scan: the search blocks held since
         the last one are the signal, this block the reference."""
         signal, self.fs_rows = self.fs_rows, []
@@ -693,7 +713,7 @@ class HLine:
         chans = int(self.h["channels"])
         if nch % chans:
             return False
-        reference = wf_raw.reshape(rows, chans, nch // chans).mean(axis=2).astype(np.float32)
+        reference = self._rows(wf_raw, gated)
         signal = np.concatenate(signal)
         stamp = time.strftime("%Y%m%d_%H%M%S")
         dat = os.path.join(self.dir, f"obs_{stamp}.dat")
@@ -714,7 +734,10 @@ class HLine:
         finally:
             src.center_hz = home
         obs["fs_throw_hz"] = f_ref - f_sig
-        return self.record(dat, obs, stamp, ref=ref)
+        try:
+            return self.record(dat, obs, stamp, ref=ref)
+        finally:
+            self._kept = []
 
     def day_file(self, wf_raw, obs, block_s):
         """The compact H-line product: one integrated 1024-channel row per block,
