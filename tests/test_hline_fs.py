@@ -531,3 +531,42 @@ def test_fs_half_and_half_still_available(tmp_path, monkeypatch):
     assert hl.scan()
     f_sig, f_ref = hline.fs_tunings(hl.h, src.rate)
     assert tuned == [(f_sig, 10), (f_ref, 10)] * 2
+
+
+def _search_rows(pulsed, blank):
+    from aquila import dsp
+    gated = {"chans": 1024, "pick": hline.quiet_frames} if blank else None
+    wf, _, _ = dsp.channelize(_PulsedRadio(pulsed), 65536, 3, 0.2, 0.0, gated=gated)
+    return wf, gated
+
+
+def test_search_block_gives_blanked_hydrogen_rows():
+    """Search and hydrogen together: the hydrogen rows come from the quiet frames, as in
+    a hydrogen only scan, and the search's own waterfall is left exactly as it was."""
+    clean_wf, clean = _search_rows(False, True)
+    assert clean["rows"].shape == (3, 1024) and min(clean["kept"]) > 0.99
+    wf, gated = _search_rows(True, True)
+    assert 0.15 < np.median(gated["kept"]) < 0.27
+    assert abs(10 * np.log10(np.median(gated["rows"]) / np.median(clean["rows"]))) < 0.1
+    plain_wf, none = _search_rows(True, False)
+    assert none is None and np.array_equal(wf, plain_wf)
+    assert 10 * np.log10(np.median(wf) / np.median(clean_wf)) > 15
+
+
+def test_shared_scan_uses_the_blanked_rows_only_when_asked(tmp_path):
+    from aquila import config as cfgmod
+    from aquila.sdr import Synthetic
+    cfg = cfgmod.load(str(tmp_path / "c.json"))
+    cfg.update(sdr="synthetic", sample_rate=5_000_000, state_dir=str(tmp_path / "s"))
+    node = hline.HLine(cfg, source=Synthetic(cfg), log=lambda m: None)
+    node.fs_search = 3
+    assert node.gated() is None                      # blanking off: nothing changes
+    node.h["blank_pulses"] = True
+    assert node.gated()["chans"] == 1024
+    node.fs_search = 0
+    assert node.gated() is None                      # not frequency switched: as before
+    wf = np.ones((4, 4096), np.float32)
+    rows = np.full((4, 1024), 7.0, np.float32)
+    assert np.array_equal(node._rows(wf, {"rows": rows, "kept": [0.2]}), rows)
+    assert np.allclose(node._rows(wf, None), 1.0)
+    assert np.allclose(node._rows(wf, {"rows": rows[:2]}), 1.0)   # wrong shape: not used

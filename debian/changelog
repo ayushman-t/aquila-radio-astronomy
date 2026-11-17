@@ -10,6 +10,10 @@ aquila-radio-astronomy (0.2.23) unstable; urgency=medium
   * Airspy chosen with a HydraSDR plugged in now observes.
   * RTL-SDR: with two dongles plugged in, Settings and the first setup list them
     one by one (RTL-SDR #1, #2) so the one to use can be picked.
+  * New in the receiver list once their own software is installed: SDRplay RSP,
+    ADALM-Pluto, bladeRF and LimeSDR. Marked untested.
+  * Ignoring pulsed interference now also works while the narrowband search runs.
+    It was applied in hydrogen line only mode alone.
   * An observer no longer stays running after the app is killed or crashes.
   * hline --blocks ends with an error when no scan could be made.
 

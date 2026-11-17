@@ -1223,7 +1223,19 @@ def _in_use(current_sdr, chosen):
 
 def _auto_pick(names):
     """The receiver Auto takes from those plugged in: the node tries them in this order."""
-    return next((n for n in sdr.detect() if n in names), None)
+    return next((n for n in sdr.detect() if n in names), None) or sdr.vendor_pick(names)
+
+
+def _needs(name):
+    """What a plugged in receiver still needs installed before it can be used, or ""."""
+    cls = sdr.SOURCES[name]
+    return "" if not issubclass(cls, sdr.VendorLib) or cls.available() else cls.install
+
+
+def _seen(name):
+    """A plugged in receiver as the connected line names it."""
+    need = _needs(name)
+    return sdr.SOURCES[name].label + (f" (needs {need} installed)" if need else "")
 
 
 def _look_for_receivers(rates=True):
@@ -1495,11 +1507,12 @@ class Settings(QDialog):
         self.plot_smooth.setToolTip("Only changes how the line is drawn. "
                                     "The measured peak stays the same.")
         form.addRow("", self.plot_smooth)
-        self.blank = QCheckBox("Ignore pulsed interference in hydrogen line only mode")
+        self.blank = QCheckBox("Heavy interference: ignore pulsed signals in hydrogen scans")
         self.blank.setChecked(bool(hl.get("blank_pulses", False)))
-        self.blank.setToolTip("For a strong pulsed signal at your site: scans use only the "
-                              "gaps between pulses. Lower the gain as well, at full gain "
-                              "the line can be lost.")
+        self.blank.setToolTip("Turn on if the hydrogen baseline is bent or the line is lost "
+                              "to a strong pulsed signal at your site. Scans then use only "
+                              "the gaps between pulses. Lower the gain as well, at full "
+                              "gain the line can be lost.")
         form.addRow("", self.blank)
         sv = cfg.get("save") or {}
         self.s_csv = QCheckBox("Hit and scan tables (CSV)")
@@ -1555,7 +1568,7 @@ class Settings(QDialog):
         names = [] if isinstance(names, Exception) else [n for n in names if n in sdr.SOURCES]
         self.plugged = names
         self.sdr_result.setText(
-            "Not observing. Connected: " + ", ".join(sdr.SOURCES[n].label for n in names)
+            "Not observing. Connected: " + ", ".join(_seen(n) for n in names)
             if names else "Not observing. No receiver connected.")
         if _add_units(self.sdr, units):
             self.sdr_result.setText(self.sdr_result.text() + ". " + SAME_SERIAL_TEXT)
@@ -1619,7 +1632,8 @@ class Settings(QDialog):
             box.setRange(low, high)
             box.setSingleStep(step)
             box.setValue(now[key])
-            box.setToolTip("Highest is the default. Lower it if a strong signal overdrives "
+            box.setToolTip(getattr(cls, "gain_tip", "") or
+                           "Highest is the default. Lower it if a strong signal overdrives "
                            "the receiver. Takes effect when observing is next started.")
             self.gain_row.addWidget(QLabel(label))
             self.gain_row.addWidget(box)
@@ -1756,7 +1770,7 @@ class QuickSetup(QDialog):
             self.sdr.addItem(label if ok else f"{label}  (not installed: {install})", name)
             if not ok:
                 self.sdr.model().item(self.sdr.count() - 1).setEnabled(False)
-        want = cfg.get("sdr") if cfg.get("sdr") in found + ["synthetic"] else "auto"
+        want = cfg.get("sdr") if cfg.get("sdr") in found + list(sdr.NOT_AUTO) else "auto"
         self.sdr.setCurrentIndex(max(self.sdr.findData(want), 0))
         _add_pinned(self.sdr, dict(cfg, sdr=want))
         row = QHBoxLayout()
@@ -1849,9 +1863,10 @@ class QuickSetup(QDialog):
         same_serial = _add_units(self.sdr, units)
         self.auto_sdr = self.auto_sdr or _auto_pick(names)
         self._show_rest()
-        labels = [sdr.SOURCES[n].label for n in names]
+        labels = [_seen(n) for n in names]
+        ready = [sdr.SOURCES[n].label for n in names if not _needs(n)]
         self.sdr.setItemText(0, "Auto detect  (now: "
-                             + (labels[0] if labels else "none detected") + ")")
+                             + (ready[0] if ready else "none detected") + ")")
         if labels:
             self.sdr_result.setText("Connected: " + ", ".join(labels)
                                     + (". " + SAME_SERIAL_TEXT if same_serial else ""))

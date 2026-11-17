@@ -527,18 +527,145 @@ class Synthetic(Source):
         self.remaining = 0
 
 
-SOURCES = {c.name: c for c in (Airspy, HydraSDR, RtlSdr, HackRF, Synthetic)}
+class VendorLib(Source):
+    """A receiver with no capture tool of its own, read through its maker's library by
+    aquila/vendor_rx.py as its own process, int16 IQ.
+
+    The four receivers above keep their own tools and never come through here. These
+    are written from the libraries' documentation: until one has been run on the real
+    receiver its label says untested."""
+    tool = ""
+    lib = ""                    # the key of its library in vendor_rx.LIBS
+    bias_default = False        # not measured hardware: no voltage on the coax until asked
+
+    @classmethod
+    def available(cls):
+        from . import vendor_rx
+        return vendor_rx.lib_path(cls.lib) is not None
+
+    def command(self, nsamples):
+        cmd = vendor_cmd(self.lib) + ["rx", "--freq", str(self.center_hz),
+                                      "--rate", str(self.rate), "--n", str(nsamples),
+                                      "--bias", "1" if self.bias else "0", "--out", "-"]
+        if self.device:
+            cmd += ["--dev", self.device]
+        for k, v in self.gain.items():
+            cmd += ["--gain", f"{k}={v:g}"]
+        return cmd
+
+    def finish(self):
+        err = super().finish()
+        for line in err.splitlines():
+            if line.startswith("gains set: "):
+                # what the library reports, so Check and the file headers show that
+                got = {}
+                for item in line[len("gains set: "):].split(","):
+                    k, _, v = item.strip().partition("=")
+                    with contextlib.suppress(ValueError):
+                        got[k] = float(v)
+                if got:
+                    self.gain = got
+        return err
+
+
+def vendor_pick(plugged):
+    """The first receiver among those plugged in that is read through its maker's
+    library and has that library installed, or None. Auto comes here only after the
+    receivers with their own tools."""
+    return next((n for n in plugged if n in SOURCES and issubclass(SOURCES[n], VendorLib)
+                 and SOURCES[n].available()), None)
+
+
+def vendor_cmd(lib):
+    """The start of the command line that runs vendor_rx for one receiver. A frozen app
+    is its own interpreter and takes a verb; a normal install runs the module, with the
+    package's own folder last on the path so a checkout that was never installed still
+    imports."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "vendor-rx", lib]
+    code = ("import sys; sys.path.append(sys.argv.pop(1)); from aquila import vendor_rx; "
+            "sys.exit(vendor_rx.main(sys.argv[1:]))")
+    pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return [sys.executable, "-c", code, pkg_root, lib]
+
+
+class Pluto(VendorLib):
+    """ADALM-Pluto through libiio. One gain, 12 bit. Below 2.1 Msps it needs a filter
+    loaded, so the rates start above that; USB 2 carries about 5 Msps."""
+    name = lib = "pluto"
+    label = "ADALM-Pluto (untested)"
+    install = "libiio"
+    default_rate = 2_500_000
+    rates = (2_500_000, 3_000_000, 4_000_000, 5_000_000)
+    preset = {"gain": 73}       # the top at this frequency is read from the receiver
+    gain_controls = (("gain", "Gain dB", 0, 73, 1),)
+
+
+class BladeRF(VendorLib):
+    """bladeRF through libbladeRF. Full gain sets every stage to its top by name; a
+    lower figure is shared out between the stages by the library."""
+    name = lib = "bladerf"
+    label = "bladeRF (untested)"
+    install = "bladeRF software"
+    default_rate = 5_000_000
+    rates = (2_500_000, 5_000_000, 8_000_000, 10_000_000, 20_000_000)
+    preset = {"gain": 66}
+    gain_controls = (("gain", "Gain dB", 0, 66, 1),)
+
+
+class LimeSDR(VendorLib):
+    """LimeSDR (USB, Mini) through LimeSuite, which has one combined gain."""
+    name = lib = "limesdr"
+    label = "LimeSDR (untested)"
+    install = "LimeSuite"
+    default_rate = 5_000_000
+    rates = (2_500_000, 5_000_000, 10_000_000, 20_000_000)
+    preset = {"gain": 73}
+    gain_controls = (("gain", "Gain dB", 0, 73, 1),)
+
+
+class SDRplay(VendorLib):
+    """SDRplay RSP through the maker's API (version 3). Its gains are reductions: LNA
+    step 0 and IF reduction 20 dB are the most gain. How many LNA steps there are
+    depends on the model."""
+    name = lib = "sdrplay"
+    label = "SDRplay RSP (untested)"
+    install = "SDRplay API"
+    default_rate = 6_000_000
+    rates = (2_000_000, 2_500_000, 3_000_000, 4_000_000, 5_000_000, 6_000_000, 8_000_000,
+             10_000_000)
+    preset = {"lna": 0, "if": 20}
+    gain_controls = (("lna", "LNA reduction step", 0, 27, 1),
+                     ("if", "IF reduction dB", 20, 59, 1))
+    gain_tip = ("These are reductions: lowest is the default and gives the most gain. "
+                "Raise it if a strong signal overdrives the receiver. Takes effect when "
+                "observing is next started.")
+
+
+SOURCES = {c.name: c for c in (Airspy, HydraSDR, RtlSdr, HackRF, SDRplay, Pluto, BladeRF,
+                               LimeSDR, Synthetic)}
+
+# not among the tools Auto tries one by one: a receiver read through its maker's library
+# is taken by Auto only when it is seen plugged in and none of those answered
+NOT_AUTO = ("synthetic", "sdrplay", "pluto", "bladerf", "limesdr")
 
 
 def detect():
     """Names of SDR tools found on this machine, hardware ones first."""
-    return [n for n, c in SOURCES.items() if n != "synthetic" and c.available()]
+    return [n for n, c in SOURCES.items() if n not in NOT_AUTO and c.available()]
 
 
 # USB vendor:product of each receiver. Airspy and HydraSDR share an id; the product
 # string tells them apart.
 USB_IDS = {("1d50", "60a1"): ("airspy", "hydrasdr"), ("0bda", "2838"): ("rtlsdr",),
-           ("0bda", "2832"): ("rtlsdr",), ("1d50", "6089"): ("hackrf",)}
+           ("0bda", "2832"): ("rtlsdr",), ("1d50", "6089"): ("hackrf",),
+           ("0456", "b673"): ("pluto",), ("2cf0", "5246"): ("bladerf",),
+           ("1d50", "6066"): ("bladerf",),
+           ("2cf0", "5250"): ("bladerf",), ("1d50", "6108"): ("limesdr",),
+           ("0403", "601f"): ("limesdr",), ("1df7", "2500"): ("sdrplay",),
+           ("1df7", "3000"): ("sdrplay",), ("1df7", "3010"): ("sdrplay",),
+           ("1df7", "3020"): ("sdrplay",), ("1df7", "3030"): ("sdrplay",),
+           ("1df7", "3050"): ("sdrplay",), ("1df7", "3060"): ("sdrplay",)}
 
 
 def usb_devices():
@@ -726,7 +853,9 @@ def attached():
 
 def choices():
     """(name, label, available, install hint) for every source, for a settings list."""
-    return [(n, c.label, c.available(), c.install) for n, c in SOURCES.items()]
+    # a receiver read through its maker's library is listed once that library is here
+    return [(n, c.label, ok, c.install) for n, c in SOURCES.items()
+            for ok in [c.available()] if ok or not issubclass(c, VendorLib)]
 
 
 def probe(cfg, seconds=0.5):
@@ -776,16 +905,26 @@ def make(cfg):
     name = cfg.get("sdr", "auto")
     if name == "auto":
         found = detect()
-        if not found:
-            raise RuntimeError("no SDR tool found "
-                               "(airspy_rx, hydrasdr_rx, rtl_sdr, hackrf_transfer)")
-        name = found[0]
-        if len(found) > 1:
-            # several tool sets installed: use the first one with a radio actually on it
-            for n in found:
-                if probe(dict(cfg, sdr=n), seconds=0.2)[0]:
-                    name = n
-                    break
+        answered = False
+        if found:
+            name = found[0]
+            if len(found) > 1:
+                # several tool sets installed: use the first one with a radio actually on it
+                for n in found:
+                    if probe(dict(cfg, sdr=n), seconds=0.2)[0]:
+                        name = n
+                        answered = True
+                        break
+        if not answered:
+            # none of those answered, or the only one was not asked: a receiver read
+            # through its maker's library is taken when it is the one plugged in
+            plugged = attached()
+            other = None if found and name in plugged else vendor_pick(plugged)
+            if other:
+                name = other
+            elif not found:
+                raise RuntimeError("no SDR tool found "
+                                   "(airspy_rx, hydrasdr_rx, rtl_sdr, hackrf_transfer)")
     if name not in SOURCES:
         raise RuntimeError(f"unknown sdr '{name}'")
     if name == "airspy":
@@ -804,5 +943,7 @@ def make(cfg):
                 cfg = dict(cfg, sample_rate=rate)
     cls = SOURCES[name]
     if not cls.available():
+        if issubclass(cls, VendorLib):
+            raise RuntimeError(f"{cls.label} needs {cls.install} installed")
         raise RuntimeError(f"{name} needs '{cls.tool}' on PATH")
     return cls(cfg)

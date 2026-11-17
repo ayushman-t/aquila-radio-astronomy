@@ -35,6 +35,8 @@ sudo snap connect aquila-radio-astronomy:raw-usb
 
 A source install needs the vendor tool for your receiver on PATH: `airspy_rx`, `hydrasdr_rx`, `rtl_sdr` or `hackrf_transfer`. On Windows the receiver runs on the WinUSB driver: Airspy, HydraSDR and HackRF get it from Windows by themselves when first plugged in, an RTL-SDR needs it installed once with [Zadig](https://zadig.akeo.ie/); the app tells you when that is the problem.
 
+SDRplay RSP, ADALM-Pluto, bladeRF and LimeSDR show in the receiver list once their own software is installed (the SDRplay API, libiio, the bladeRF software, LimeSuite). These four are marked untested, I do not have them here, so a report from anyone who runs one is welcome.
+
 ## First run
 
 The app opens on a Quick setup page with everything filled in: the receiver it found, the centre frequency, where the dish points. Choose hydrogen line only or the narrowband search as well, press Save, then Start observing. The choice can be changed any time in Settings; with the search off its tabs are hidden.

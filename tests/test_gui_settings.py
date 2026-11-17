@@ -528,3 +528,36 @@ def test_a_saved_rtl_sdr_is_not_offered_without_its_software(app, tmp_path):
     out = dlg.apply()
     assert out["sdr"] == "auto" and out["advanced"]["device"] == "NESDR"   # left as saved
     retire(app, dlg)
+
+
+# ---- receivers read through their maker's library
+
+def test_a_library_receiver_is_listed_only_when_its_library_is_installed(app, tmp_path):
+    cfg = config.load(scratch(tmp_path))
+    dlg = gui.Settings(cfg, None, "auto")
+    assert all(dlg.sdr.findData(n) < 0 for n in ("sdrplay", "pluto", "bladerf", "limesdr"))
+    retire(app, dlg)
+    app.installed |= {"sdrplay"}
+    dlg = gui.Settings(cfg, None, "auto")
+    at = dlg.sdr.findData("sdrplay")
+    assert at >= 0 and dlg.sdr.itemText(at) == "SDRplay RSP (untested)"
+    assert dlg.sdr.findData("pluto") < 0
+    dlg.sdr.setCurrentIndex(at)
+    app.processEvents()
+    # its own gain boxes at most gain, its own rates, and no voltage on the coax
+    assert {k: b.value() for k, b in dlg.gain_boxes.items()} == {"lna": 0, "if": 20}
+    assert not dlg.bias.isChecked()
+    out = dlg.apply()
+    assert out["sdr"] == "sdrplay"
+    retire(app, dlg)
+
+
+def test_a_plugged_library_receiver_is_what_auto_shows(app, tmp_path):
+    app.installed = {"airspy", "rtlsdr", "sdrplay"}
+    app.plugged = ["sdrplay", "pluto"]
+    dlg = gui.Settings(config.load(scratch(tmp_path, sdr="auto")), None, None)
+    assert pump(app, lambda: "Connected" in dlg.sdr_result.text())
+    assert dlg.sdr_result.text() == ("Not observing. Connected: SDRplay RSP (untested), "
+                                     "ADALM-Pluto (untested) (needs libiio installed)")
+    assert dlg.auto_sdr == "sdrplay" and set(dlg.gain_boxes) == {"lna", "if"}
+    retire(app, dlg)

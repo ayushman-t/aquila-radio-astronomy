@@ -136,9 +136,10 @@ class Survey:
         if self.src.injector:
             self.src.injector.begin_block()
         try:
+            gated = self.hline.gated()
             wf, chan_bw, row_s = dsp.channelize(self.src, nch, int(adv["rows"]),
                                                 float(adv["dwell_s"]), float(adv["settle_skip_s"]),
-                                                log, raw_sink=raw)
+                                                log, raw_sink=raw, gated=gated)
         finally:
             if raw is not None:
                 with contextlib.suppress(OSError):
@@ -172,7 +173,7 @@ class Survey:
         block_s = wf.shape[0] * row_s
         raw_mean = wf.mean(axis=0)
         try:
-            self.hline.record_block(wf, row_s)
+            self.hline.record_block(wf, row_s, gated)
         except Exception as e:
             log(f"h-line product failed: {e}")
         prev = self._norm_ref
@@ -296,15 +297,16 @@ class Survey:
         self.status("capturing")
         self.src.center_hz = self.f_ref
         try:
+            gated = self.hline.gated()
             wf, _, row_s = dsp.channelize(self.src, int(adv["n_chan"]), int(adv["rows"]),
                                           float(adv["dwell_s"]), float(adv["settle_skip_s"]),
-                                          self.store.log)
+                                          self.store.log, gated=gated)
         finally:
             self.src.center_hz = self.f_sig
         if wf is None:
             self.hline.fs_rows = []
             return False
-        return self.hline.record_reference(wf, row_s, self.f_sig, self.f_ref)
+        return self.hline.record_reference(wf, row_s, self.f_sig, self.f_ref, gated)
 
     def curate_async(self):
         """Tier the hits in a separate low-priority process. A flooded day can take
