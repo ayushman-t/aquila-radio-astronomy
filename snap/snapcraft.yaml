@@ -48,6 +48,10 @@ parts:
       - airspy
       - rtl-sdr
       - hackrf
+      # read through their own libraries by aquila/vendor_rx.py
+      - libiio0
+      - libbladerf2
+      - liblimesuite23.11-1
       - libusb-1.0-0
       - python3-venv
       - usbutils
