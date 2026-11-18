@@ -570,3 +570,40 @@ def test_shared_scan_uses_the_blanked_rows_only_when_asked(tmp_path):
     assert np.array_equal(node._rows(wf, {"rows": rows, "kept": [0.2]}), rows)
     assert np.allclose(node._rows(wf, None), 1.0)
     assert np.allclose(node._rows(wf, {"rows": rows[:2]}), 1.0)   # wrong shape: not used
+
+
+def _bowl_scan(tmp_path, depth=0.04, peak=0.06, rate=4_000_000):
+    """A scan whose switched baseline is a bowl, as an ADALM-Pluto gives."""
+    files, obs = _scan(tmp_path, rate, peak=peak, wing=0.0, slope=0.0, drift=1.0)
+    rows = np.fromfile(files["sig"], dtype=np.float32).reshape(-1, 1024)
+    x = (np.arange(1024) - 512) / 1024.0
+    (rows * (1.0 + depth * ((x / 0.25) ** 2 - 1.0))).astype(np.float32).tofile(files["sig"])
+    return files, obs
+
+
+def test_curved_baseline_reads_the_line_right_under_a_bowl(tmp_path):
+    files, obs = _bowl_scan(tmp_path)
+    true_db = 10 * np.log10(1.06)
+    straight = hline.measure_fs(files["sig"], files["ref"], obs, dict(hline.DEFAULTS))
+    curved = hline.measure_fs(files["sig"], files["ref"], obs,
+                              dict(hline.DEFAULTS, fs_baseline_order=2))
+    assert straight["db"] < 0.6 * true_db           # the straight line reads it low
+    assert abs(curved["db"] - true_db) < 0.1 * true_db
+
+
+def test_curved_baseline_changes_little_where_the_baseline_is_straight(tmp_path):
+    files, obs = _scan(tmp_path, 5_000_000)
+    a = hline.measure_fs(files["sig"], files["ref"], obs, dict(hline.DEFAULTS))
+    b = hline.measure_fs(files["sig"], files["ref"], obs,
+                         dict(hline.DEFAULTS, fs_baseline_order=2))
+    assert abs(a["db"] - b["db"]) < 0.02 * a["db"]
+
+
+def test_only_the_pluto_gets_the_curved_baseline(tmp_path):
+    from aquila import sdr
+    for name, cls in sdr.SOURCES.items():
+        assert cls.fs_baseline_order == (2 if name == "pluto" else 1), name
+    node = _node(tmp_path)
+    assert node.h["fs_baseline_order"] == 1
+    node.src.fs_baseline_order = 2                  # as a Pluto would say
+    assert hline.HLine(node.cfg, source=node.src, log=lambda m: None).h["fs_baseline_order"] == 2

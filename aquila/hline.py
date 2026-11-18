@@ -54,6 +54,11 @@ DEFAULTS = {
     # broad structure fixed in sky frequency reaches about -170 km/s, so +-120 fitted part of
     # it as baseline
     "line_window_kms": 180,
+    # frequency switched baseline: 1 is a straight line, 2 a curve. 0 = the receiver's
+    # own (sdr.Source.fs_baseline_order): a straight line for all but the ADALM-Pluto,
+    # whose switched baseline is a bowl (one station's scans, Nov 2026: 0.15 to 0.25 dB
+    # deep, the same from scan to scan), under which a straight line reads the line low
+    "fs_baseline_order": 0,
     # scan only between the bursts of pulsed interference (see quiet_frames). Off unless
     # a site needs it, and it needs a gain below compression: an overdriven receiver
     # squeezes the bursts down to the gaps, and the line was lost at full VGA (measured)
@@ -426,7 +431,8 @@ def measure_fs(sig_dat, ref_dat, obs, h, why=None):
                        "Use a higher sample rate")
         return None
     # divide, not subtract: the line is then relative to the continuum under it
-    res = (1.0 + xs) / (1.0 + np.polyval(np.polyfit(x[fit], xs[fit], 1), x)) - 1.0
+    order = 2 if int(h.get("fs_baseline_order") or 1) >= 2 else 1
+    res = (1.0 + xs) / (1.0 + np.polyval(np.polyfit(x[fit], xs[fit], order), x)) - 1.0
     n = median_channels(h, obs)
     sm = median_filter(res, size=n, mode="nearest") if n > 1 else res
     ipk = int(np.argmax(np.where(line, sm, -1e9)))
@@ -485,6 +491,8 @@ class HLine:
         self.cal = os.path.join(self.dir, "cal.dat")
         self.csv = os.path.join(self.dir, "scans.csv")
         self.src = source or sdr.make(cfg)
+        if not self.h.get("fs_baseline_order"):
+            self.h["fs_baseline_order"] = getattr(self.src, "fs_baseline_order", 1)
         self.store = Store(cfg["state_dir"])
         self.log = self.store.log if log is print else log
         self.running = True

@@ -157,6 +157,7 @@ class Source:
     rates = ()
     preset = {}
     gain_controls = ()      # (key, label, lowest, highest, step), shown in Settings
+    fs_baseline_order = 1   # frequency switched baseline: a straight line (see hline)
 
     @classmethod
     def gains_from(cls, wanted):
@@ -599,6 +600,7 @@ class Pluto(VendorLib):
     rates = (2_500_000, 3_000_000, 4_000_000, 5_000_000)
     preset = {"gain": 73}       # the top at this frequency is read from the receiver
     gain_controls = (("gain", "Gain dB", 0, 73, 1),)
+    fs_baseline_order = 2       # its switched baseline is a bowl
 
 
 class BladeRF(VendorLib):

@@ -1,3 +1,13 @@
+aquila-radio-astronomy (0.2.24) unstable; urgency=medium
+
+  * ADALM-Pluto: a unit that reports no serial number is now found. Check and
+    observing stopped with "list index out of range".
+  * ADALM-Pluto: the hydrogen line baseline is fitted with a curve. Its baseline
+    is a bowl, and under a straight line the peak read about 0.1 dB low. Other
+    receivers keep the straight line.
+
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Wed, 18 Nov 2026 14:42:29 -0500
+
 aquila-radio-astronomy (0.2.23) unstable; urgency=medium
 
   * Hydrogen line only: three parts of a scan are on the line and one on the

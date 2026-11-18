@@ -198,6 +198,13 @@ def _iio_err(lib, code):
     return _text(buf.value) or f"error {code}"
 
 
+def _iio_serial(text):
+    """The serial in a libiio description, "" when it has none: a Pluto whose serial
+    could not be read is listed as "... serial=" with nothing after it."""
+    words = text.rpartition("serial=")[2].split() if "serial=" in text else []
+    return words[0].strip(",") if words else ""
+
+
 def _pluto_list(lib):
     """(description, uri, serial) of each Pluto on USB."""
     out = []
@@ -210,8 +217,7 @@ def _pluto_list(lib):
         text = _text(lib.iio_context_info_get_description(info[i]))
         uri = _text(lib.iio_context_info_get_uri(info[i]))
         if "0456:b673" in text.lower() or "pluto" in text.lower():
-            serial = text.split("serial=")[-1].split()[0].strip(",") if "serial=" in text else ""
-            out.append((text, uri, serial))
+            out.append((text, uri, _iio_serial(text)))
     if n >= 0:
         lib.iio_context_info_list_free(info)
     lib.iio_scan_context_destroy(scan)

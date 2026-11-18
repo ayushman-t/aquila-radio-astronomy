@@ -429,3 +429,13 @@ def test_packaged_app_knows_every_verb():
     known = set(re.findall(r'"([a-z0-9-]+)"', entry.split("VERBS = {")[1].split("}")[0]))
     cli_src = open(os.path.join(root, "aquila", "cli.py")).read()
     assert set(re.findall(r'add_parser\("([a-z0-9-]+)"', cli_src)) == known
+
+
+def test_pluto_without_a_serial_is_still_listed():
+    """A Pluto whose serial cannot be read comes as "... serial=" and nothing more."""
+    from aquila import vendor_rx
+    head = "0456:b673 (Analog Devices Inc. PlutoSDR (ADALM-PLUTO))"
+    assert vendor_rx._iio_serial(head + ", serial=104473FAKE") == "104473FAKE"
+    assert vendor_rx._iio_serial(head + ", serial=") == ""
+    assert vendor_rx._iio_serial(head + ", serial= ") == ""
+    assert vendor_rx._iio_serial(head) == ""
