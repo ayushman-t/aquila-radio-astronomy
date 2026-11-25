@@ -243,11 +243,11 @@ def scale(z):
     return lo, hi if hi > lo else lo + 1e-3          # a flat history still needs a scale
 
 
-def draw(fig, rows, title="", days=7, now=None, light=False, fig2=None):
+def draw(fig, rows, title="", days=7, now=None, light=False, fig2=None, lsr=False):
     """The 3D surface and the map beside it, on fig. Returns the 3D axes, or None when
     there is not enough to draw. light: a coarser surface for a plot the user turns.
     fig2: draw the map on this second figure instead, and no title on either (the app
-    puts the two in their own boxes)."""
+    puts the two in their own boxes). lsr: the rows are on the LSR velocity axis."""
     import datetime as dt
 
     from matplotlib import colormaps
@@ -315,7 +315,7 @@ def draw(fig, rows, title="", days=7, now=None, light=False, fig2=None):
     # feature sits at the same place in both when the view is turned flat.
     ax.view_init(elev=32, azim=-60)
     ax.set_xlabel("Time", labelpad=16)
-    ax.set_ylabel("Velocity (km/s)", labelpad=8)
+    ax.set_ylabel("LSR velocity (km/s)" if lsr else "Velocity (km/s)", labelpad=8)
     ax.set_zlabel("dB", labelpad=4)
     ax.set_xlim(x[0], x[-1])
     ax.set_ylim(v[0], v[-1])
@@ -334,7 +334,7 @@ def draw(fig, rows, title="", days=7, now=None, light=False, fig2=None):
     m = b.pcolormesh(x, v, np.ma.masked_invalid(z.T), cmap="viridis", vmin=lo, vmax=hi,
                      shading="nearest")
     (fig if fig2 is None else fig2).colorbar(m, ax=b, label="Power above baseline (dB)", pad=0.01)
-    b.set_ylabel("Velocity (km/s, positive = receding)")
+    b.set_ylabel(("LSR velocity" if lsr else "Velocity") + " (km/s, positive = receding)")
     b.set_xlabel("Time")
     ticks, fmt = _ticks(x[0], x[-1], 7)
     b.xaxis.set_major_locator(FixedLocator(ticks))

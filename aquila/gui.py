@@ -831,8 +831,9 @@ class Map3DPane(QWidget):
     HOME = (32, -60)
     ZOOM = 1.15                    # the size of the first view, where the box has the room
 
-    def __init__(self, text):
+    def __init__(self, text, lsr=False):
         super().__init__()
+        self.lsr = lsr             # the rows it is given are on the LSR velocity axis
         self.image = ImagePane(text)
         self._stack = QStackedLayout(self)
         self._stack.addWidget(self.image)
@@ -917,10 +918,10 @@ class Map3DPane(QWidget):
     def _placeholder(self):
         return self.image._placeholder
 
-    def set_rows(self, rows, title=""):
+    def set_rows(self, rows, title="", tag=None):
         if self.canvas is None or rows is None or not rows.size:
             return
-        key = (int(rows.size), float(rows["t"].max()), title)
+        key = (int(rows.size), float(rows["t"].max()), title, tag)
         if key == self._key:
             return
         self._rows, self._key, self._title = rows, key, title
@@ -939,7 +940,8 @@ class Map3DPane(QWidget):
         from . import map3d
         view = (self.ax.elev, self.ax.azim) if self.ax is not None else None
         try:
-            ax = map3d.draw(self.fig, self._rows, self._title, light=True, fig2=self.fig2)
+            ax = map3d.draw(self.fig, self._rows, self._title, light=True, fig2=self.fig2,
+                            lsr=self.lsr)
         except Exception:
             ax = None
         if ax is None:
@@ -2093,8 +2095,9 @@ class Main(QMainWindow):
         self.sp_curve.setData([], [])
         self.wf_plot.setTitle("Waterfall (loading)")
         self.sp_plot.setTitle("Spectrum (loading)")
-        for pane in (self.hl_cal, self.hl_raw, self.map_pane, self.sv_block_pane,
-                     self.c_thumb):
+        self._lsr_key = None
+        for pane in (self.hl_cal, self.hl_raw, self.map_pane, self.lsr_pane,
+                     self.sv_block_pane, self.c_thumb):
             pane.set_data(None)
             pane.setText("Loading...")
         self.hl_day.set_rows(None)
@@ -2207,6 +2210,9 @@ class Main(QMainWindow):
         self.map_pane.log = lambda m: self.log.appendPlainText(
             time.strftime('%H:%M:%S  ') + m)
         self.map_tab = tabs.addTab(self.map_pane, "3D")
+        self.lsr_pane = Map3DPane(self.MAP_EMPTY, lsr=True)
+        self.lsr_pane.log = self.map_pane.log
+        self.lsr_tab = tabs.addTab(self.lsr_pane, "VLSR 3D")
 
         # Candidates
         w = QWidget()
@@ -2282,6 +2288,7 @@ class Main(QMainWindow):
         return lb, btn, row
 
     MAP_EMPTY = "The plot builds up as scans come in."
+    LSR_NO_SITE = "Set the site location in Settings to see this plot."
     LINE_ONLY = "This node is observing the hydrogen line only."
     LIVE_CSS = ("QLabel { background: #2e9e4f; color: white; font-weight: bold; "
                 "padding: 3px 8px; border-radius: 4px; }")
@@ -2405,8 +2412,8 @@ class Main(QMainWindow):
             if self.wf_plot.plotItem.titleLabel.text == "Waterfall (loading)":
                 self.wf_plot.setTitle(f"Waterfall ({why})")
                 self.sp_plot.setTitle(f"Spectrum ({why})")
-                for pane in (self.hl_cal, self.hl_raw, self.map_pane, self.sv_block_pane,
-                     self.c_thumb):
+                for pane in (self.hl_cal, self.hl_raw, self.map_pane, self.lsr_pane,
+                             self.sv_block_pane, self.c_thumb):
                     if pane.text() == "Loading...":
                         pane.setText(f"Node {why}.")
             ours = self.proc is not None and self.proc.state() != QProcess.NotRunning
@@ -2480,13 +2487,6 @@ class Main(QMainWindow):
         if "npz" not in d:
             return                          # status only: the files are still on their way
         self._refresh_waterfall(d["npz"], s.get("ts"))
-        if "hl_raw" in d:
-            self._refresh_hline(d)
-        if d.get("partial"):
-            return                          # the tables and the log come with the full result
-        self._refresh_blocks(d)
-        self._refresh_cands(d["cands"])
-        self.sky.load_background()
         if n.remote:
             view = {"dish": s.get("dish") or {"az": 0, "el": 90},
                     "site": s.get("site") or {}, "center_mhz": (s.get("center_hz") or 1420e6) / 1e6}
@@ -2494,6 +2494,18 @@ class Main(QMainWindow):
             view = dict(self.cfg)
             if d.get("dish"):
                 view["dish"] = d["dish"]
+        if "hl_raw" in d:
+            self._refresh_hline(d)
+            try:
+                self._refresh_lsr(d.get("hist"), view)
+            except Exception:               # this plot must never hold up the other tabs
+                self._lsr_key = None
+                self.lsr_pane.set_data(None)
+        if d.get("partial"):
+            return                          # the tables and the log come with the full result
+        self._refresh_blocks(d)
+        self._refresh_cands(d["cands"])
+        self.sky.load_background()
         # a selected H-line scan shows the sky as it was then, from the scan's own header
         t_scan, dish_scan = self._scan_pointing(d)
         if dish_scan:
@@ -2548,6 +2560,29 @@ class Main(QMainWindow):
         if getattr(self, "_wf_span", None) != (f_lo, f_hi):
             self._wf_span = (f_lo, f_hi)      # only a new tuning resets a zoom
             self.wf_plot.setXRange(f_lo, f_hi, padding=0)
+
+    def _refresh_lsr(self, hist, view):
+        """The 3D plot again, with each scan moved onto the LSR velocity axis for where
+        the dish points."""
+        from . import lsr
+        if hist is None or not hist.size:
+            self._lsr_key = None
+            self.lsr_pane.set_data(None)
+            return
+        corr = lsr.of_dish(view, hist["t"])
+        if corr is None:
+            self._lsr_key = None
+            self.lsr_pane.set_data(None)
+            self.lsr_pane.setText(self.LSR_NO_SITE)
+            return
+        at = (view["dish"].get("az"), view["dish"].get("el"),
+              view["site"].get("lat"), view["site"].get("lon"))
+        key = (int(hist.size), float(hist["t"].max()), self.node().name, at)
+        if key == getattr(self, "_lsr_key", None):
+            return
+        self._lsr_key = key
+        self.lsr_pane.image.set_data(None)
+        self.lsr_pane.set_rows(lsr.shifted(hist, corr), self.node().name, tag=at)
 
     def _refresh_hline(self, d):
         head, rows = d["scans"]

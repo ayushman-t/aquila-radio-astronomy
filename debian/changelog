@@ -1,78 +1,9 @@
-aquila-radio-astronomy (0.2.24) unstable; urgency=medium
+aquila-radio-astronomy (0.2.25) unstable; urgency=medium
 
-  * ADALM-Pluto: a unit that reports no serial number is now found. Check and
-    observing stopped with "list index out of range".
-  * ADALM-Pluto: the hydrogen line baseline is fitted with a curve. Its baseline
-    is a bowl, and under a straight line the peak read about 0.1 dB low. Other
-    receivers keep the straight line.
+  * New tab "VLSR 3D", next to "3D": the same plot with every scan moved to the
+    velocity of the local standard of rest (LSRK), so the line stays at the
+    same velocity from day to day. It uses the dish pointing and the site
+    location from Settings.
 
- -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Wed, 18 Nov 2026 14:42:29 -0500
-
-aquila-radio-astronomy (0.2.23) unstable; urgency=medium
-
-  * Hydrogen line only: three parts of a scan are on the line and one on the
-    reference, as in the narrowband search. It was half and half.
-  * Settings: centre frequency, FFT size and raw IQ are greyed out while the
-    narrowband search is off, since a hydrogen line scan does not use them. The log
-    and the status show the frequency the receiver is tuned to.
-  * Settings: the bandwidth list shows the sample rates the plugged in Airspy or
-    HydraSDR has, and the default is one it has.
-  * Airspy chosen with a HydraSDR plugged in now observes.
-  * RTL-SDR: with two dongles plugged in, Settings and the first setup list them
-    one by one (RTL-SDR #1, #2) so the one to use can be picked.
-  * New in the receiver list once their own software is installed: SDRplay RSP,
-    ADALM-Pluto, bladeRF and LimeSDR. Marked untested.
-  * Ignoring pulsed interference now also works while the narrowband search runs.
-    It was applied in hydrogen line only mode alone.
-  * An observer no longer stays running after the app is killed or crashes.
-  * hline --blocks ends with an error when no scan could be made.
-
- -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Mon, 16 Nov 2026 00:08:41 -0500
-
-aquila-radio-astronomy (0.2.22) unstable; urgency=medium
-
-  * 3D plot and day view: a peak is drawn as high as it was measured. A short peak
-    was drawn lower, by an amount that changed from day to day.
-  * RTL-SDR: the bias tee is off until it is turned on in Settings. An install that
-    already has it on keeps it on.
-  * RTL-SDR: with two dongles on one computer, the one to use can be named in the
-    config file (advanced.device, a serial or an index).
-
- -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Sat, 14 Nov 2026 21:33:32 -0500
-
-aquila-radio-astronomy (0.2.21) unstable; urgency=medium
-
-  * Settings: OK with the receiver on Auto no longer clears the saved gain and
-    sample rate.
-  * Windows: Stop, or closing the window, while the node is starting now stops it.
-    A receiver that sends no samples no longer holds the node.
-  * Windows: closing the app no longer leaves an error in the Windows event log.
-  * A table damaged by a power cut no longer stops the candidate list, the trimming
-    of old rows or the lists in the app.
-  * The candidate list is no longer worked out with the receiver the node is using.
-  * The window keeps updating when the address of a far node is not a node.
-  * RTL-SDR: the bias tee is switched off when it is set off. The test signal now
-    works on RTL-SDR and HackRF.
-  * Day view and 3D plot: no empty stripes at high sample rates or with scans far
-    apart.
-  * 3D plot: the numbers and labels at the side are no longer cut in a narrow
-    window.
-  * Smaller fixes in Settings, Quick setup, the Log tab and the sky map.
-
- -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Thu, 12 Nov 2026 18:48:09 -0500
-
-aquila-radio-astronomy (0.2.20) unstable; urgency=medium
-
-  * Hydrogen line: an RTL-SDR whose band dips on both sides of its centre gave no
-    calibrated plot. A dip that comes back up no longer ends the usable band.
-
- -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Wed, 11 Nov 2026 19:41:49 -0500
-
-aquila-radio-astronomy (0.2.19) unstable; urgency=medium
-
-  * Hydrogen line: a receiver with a narrow flat band, such as an Airspy at 2.5 MSPS,
-    gave no calibrated plot. The line window now narrows to fit the band.
-  * A scan that cannot be measured says why in the log.
-
- -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Wed, 11 Nov 2026 18:52:16 -0500
+ -- Ayushman Tripathi <ayushmantripathi7724@gmail.com>  Wed, 25 Nov 2026 08:33:41 -0500
 
